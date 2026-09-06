@@ -20,6 +20,7 @@ import { printReport, saveReportFiles, tradingDayLabels } from './output/report.
 import { renderHtmlReport, saveHtmlReport } from './output/htmlReport.js';
 import { buildMarketBrief } from './analyze/marketTheme.js';
 import { analyzeCustomStocks, normalizeCodes } from './analyze/customStocks.js';
+import { resolveStockTokens } from './analyze/resolveNames.js';
 import { splitThreeModules } from './analyze/modules.js';
 import { attachXueqiuOpinions } from './crawl/xueqiu.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
@@ -39,6 +40,8 @@ function parseArgs(argv) {
     noXueqiu: false,
     max: 15,
     codes: [],
+    // 未能直接识别成6位代码的输入（中文名/简称），交给名称解析
+    nameTokens: [],
   };
   const rest = [];
   for (const a of argv) {
@@ -50,17 +53,34 @@ function parseArgs(argv) {
     else if (a.startsWith('--max=')) {
       args.max = Math.min(30, Math.max(1, Number(a.slice(6)) || 15));
     } else if (a.startsWith('--codes=')) {
-      args.codes.push(...normalizeCodes(a.slice(8)));
+      rest.push(a.slice(8));
     } else if (a === '--stock' || a === '--codes') {
       // skip
-    } else if (/^\d{6}$/.test(a) || /,/.test(a)) {
-      args.codes.push(...normalizeCodes(a));
     } else if (!a.startsWith('-')) {
       rest.push(a);
     }
   }
-  if (!args.codes.length && rest.length) args.codes = normalizeCodes(rest);
+
+  // 支持混写：600519 贵州茅台,远东股份 英力特
+  for (const token of splitTokens(rest)) {
+    const m = token.match(/^\d{6}$/) ? token : null;
+    if (m) {
+      if (!args.codes.includes(m)) args.codes.push(m);
+    } else if (/\d{6}/.test(token)) {
+      for (const c of normalizeCodes(token)) if (!args.codes.includes(c)) args.codes.push(c);
+    } else if (token) {
+      args.nameTokens.push(token);
+    }
+  }
   return args;
+}
+
+/** 按空格/逗号/顿号等切分，兼容中文标点 */
+function splitTokens(input) {
+  return (Array.isArray(input) ? input : [input])
+    .flatMap((s) => String(s || '').split(/[\s,，;；|、]+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
 }
 
 function openInBrowser(filePath) {
@@ -84,7 +104,26 @@ async function maybeAttachXueqiu(cards, args, progress) {
 async function runCustomMode(args, labels, outDir, dateFolder) {
   console.log('\n[自选股] 开始分析...');
   const progress = (msg) => console.log(`  · ${msg}`);
-  const customRaw = await analyzeCustomStocks(args.codes, { onProgress: progress });
+
+  // 中文名 / 简称 → 6位代码
+  const codes = [...args.codes];
+  if (args.nameTokens.length) {
+    progress(`解析中文名：${args.nameTokens.join('、')}`);
+    const { results } = await resolveStockTokens(args.nameTokens);
+    for (const r of results) {
+      if (r.code) {
+        if (!codes.includes(r.code)) codes.push(r.code);
+        progress(`  ${r.token} → ${r.code} ${r.name}`);
+      } else {
+        console.log(`  ! 无法识别「${r.token}」，已跳过（可直接给6位代码）`);
+      }
+    }
+  }
+  if (!codes.length) {
+    throw new Error('没有可分析的股票。用法：npm run stock -- 贵州茅台 600519');
+  }
+
+  const customRaw = await analyzeCustomStocks(codes, { onProgress: progress });
   await maybeAttachXueqiu(customRaw.candidates, args, progress);
 
   let hotNews = [];
@@ -170,7 +209,7 @@ async function main() {
   const dateFolder = dayjs().format('YYYY-MM-DD');
   const outDir = path.join(root, 'output');
 
-  if (args.codes.length) {
+  if (args.codes.length || args.nameTokens.length) {
     await runCustomMode(args, labels, outDir, dateFolder);
     return;
   }
@@ -282,8 +321,8 @@ async function main() {
   });
   console.log(`  √ 今日热点新闻：${(brief.hotNews || []).length} 条`);
 
-  // 正股：炒作预期 + 涨跌归因（依赖行业概念与热点）
-  attachThemeExpect(modules.plainStocks, {
+  // 炒作预期 + 涨跌归因（模块三同为非ST正股，一并覆盖）
+  attachThemeExpect([...modules.plainStocks, ...modules.eventStocks], {
     hotNews: brief.hotNews || [],
     hotSectors: brief.prevTradingDay?.sectors || [],
   });
