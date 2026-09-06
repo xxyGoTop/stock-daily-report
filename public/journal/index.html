@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>交易台账 · 周录入 / 月统计</title>
+  <link rel="stylesheet" href="./styles.css" />
+</head>
+<body>
+  <div class="app">
+    <header class="top">
+      <div>
+        <h1>交易台账</h1>
+        <p class="sub">从每日候选挑票买入 · 按周录入 · 周诊断 / 月末分期 · 自动优化选股策略</p>
+      </div>
+      <div class="top-actions">
+        <button type="button" id="btnMonthReview" class="btn month-btn" disabled title="仅每月最后一天可点击">
+          本月分期
+        </button>
+        <button type="button" id="btnRefresh" class="btn ghost">刷新</button>
+        <button type="button" id="btnAnalyze" class="btn ghost">重新统计分析</button>
+      </div>
+    </header>
+
+    <section class="stats-grid" id="statsGrid">
+      <!-- filled by js -->
+    </section>
+
+    <section class="tips" id="tipsBox">
+      <h2>策略优化建议</h2>
+      <ul id="tipsList"></ul>
+      <div class="checklist" id="checklist"></div>
+    </section>
+
+    <section class="layout">
+      <aside class="panel form-panel">
+        <h2>录入买入 / 平仓</h2>
+        <form id="tradeForm" class="trade-form">
+          <input type="hidden" name="id" />
+          <div class="field">
+            <span class="field-label">代码</span>
+            <input name="code" required placeholder="600519" autocomplete="off" />
+          </div>
+          <div class="field">
+            <span class="field-label">名称</span>
+            <input name="name" placeholder="可选" autocomplete="off" />
+          </div>
+          <div class="field">
+            <span class="field-label">模块</span>
+            <select name="module">
+              <option>正股</option>
+              <option>ST</option>
+              <option>事件</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="field-label">状态</span>
+            <select name="status">
+              <option value="holding">持仓中</option>
+              <option value="win">盈利了结</option>
+              <option value="loss">亏损了结</option>
+              <option value="breakeven">持平</option>
+            </select>
+          </div>
+          <div class="field">
+            <span class="field-label">买入日</span>
+            <input type="date" name="buyDate" required />
+          </div>
+          <div class="field">
+            <span class="field-label">买入价</span>
+            <input type="number" step="0.01" name="buyPrice" required placeholder="0.00" />
+          </div>
+          <div class="field">
+            <span class="field-label">数量</span>
+            <input type="number" name="shares" value="100" />
+          </div>
+          <div class="field">
+            <span class="field-label">来源日报</span>
+            <input type="date" name="sourceReportDate" />
+          </div>
+          <div class="field">
+            <span class="field-label">卖出日</span>
+            <input type="date" name="sellDate" />
+          </div>
+          <div class="field">
+            <span class="field-label">卖出价</span>
+            <input type="number" step="0.01" name="sellPrice" placeholder="未平仓留空" />
+          </div>
+          <div class="field field-full">
+            <span class="field-label">成功原因</span>
+            <input name="successReason" placeholder="如：回踩MA5低吸后放量" />
+          </div>
+          <div class="field field-full">
+            <span class="field-label">失败原因</span>
+            <input name="failReason" placeholder="如：追高乖离过大" />
+          </div>
+          <div class="field field-full">
+            <span class="field-label">买入时乖离</span>
+            <input name="biasAtBuy" placeholder="可从日报带入" />
+          </div>
+          <div class="field field-full">
+            <span class="field-label">买入时 MACD</span>
+            <input name="macdAtBuy" placeholder="可从日报带入" />
+          </div>
+          <div class="field field-full">
+            <span class="field-label">备注</span>
+            <textarea name="notes" rows="2" placeholder="可选备注"></textarea>
+          </div>
+          <div class="form-actions">
+            <button type="submit" class="btn">保存到本周</button>
+            <button type="button" id="btnReset" class="btn ghost">清空</button>
+          </div>
+        </form>
+
+        <div class="candidates">
+          <div class="cand-head">
+            <h3>从最近日报一键带入</h3>
+            <span id="candDate" class="muted"></span>
+          </div>
+          <div id="candList" class="cand-list"></div>
+        </div>
+      </aside>
+
+      <main class="panel weeks-panel">
+        <div class="weeks-head">
+          <h2>每周一栏</h2>
+          <span class="muted">有录入且未过期的周可点「诊断」· 数据 data/trades.json</span>
+        </div>
+        <div id="weeksBoard" class="weeks-board"></div>
+      </main>
+    </section>
+  </div>
+  <script src="./app.js"></script>
+</body>
+</html>

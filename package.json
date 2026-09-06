@@ -1,0 +1,24 @@
+{
+  "name": "stock-plan-analyzer",
+  "version": "1.0.0",
+  "description": "A-share dual-strategy analyzer: short-term rolling + distressed turnaround",
+  "type": "module",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "analyze": "node src/index.js",
+    "stock": "node src/index.js --stock",
+    "watch": "node src/index.js --stock",
+    "journal": "node src/journal/server.js --open",
+    "xueqiu:login": "node scripts/xueqiu-login.js",
+    "note": "node src/note.js",
+    "便签": "node src/note.js"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "dependencies": {
+    "dayjs": "^1.11.13",
+    "playwright": "^1.63.0"
+  }
+}
