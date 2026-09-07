@@ -22,6 +22,8 @@ import { buildMarketBrief } from './analyze/marketTheme.js';
 import { analyzeCustomStocks, normalizeCodes } from './analyze/customStocks.js';
 import { resolveStockTokens } from './analyze/resolveNames.js';
 import { splitThreeModules } from './analyze/modules.js';
+import { assessDataFreshness } from './analyze/session.js';
+import { getDataFreshness } from './crawl/eastmoney.js';
 import { attachXueqiuOpinions } from './crawl/xueqiu.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { attachMarketMeta } from './analyze/marketMeta.js';
@@ -166,7 +168,9 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
     args,
     mode: 'custom',
     season: custom.season,
+    freshness: assessDataFreshness(await getDataFreshness()),
   };
+  if (meta.freshness.warn) console.error(`  ⚠ ${meta.freshness.text}`);
 
   const empty = { scanned: 0, scoredCount: 0, candidates: [], announcementHits: 0, rankedCount: 0 };
   const html = renderHtmlReport({ meta, brief, shortTerm: empty, turnaround: empty, custom });
@@ -356,7 +360,9 @@ async function main() {
     args,
     mode: 'daily',
     season: turnaround.season || brief.season,
+    freshness: assessDataFreshness(await getDataFreshness()),
   };
+  if (meta.freshness.warn) console.error(`  ⚠ ${meta.freshness.text}`);
 
   const text = printReport({ modules, meta, turnaround, indexSignals, brief });
   const html = renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, indexSignals });

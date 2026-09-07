@@ -8,19 +8,15 @@
  */
 
 import dayjs from 'dayjs';
-import { fetchActiveStocks, fetchKlines } from '../crawl/eastmoney.js';
+import { fetchActiveStocks, fetchKlines, getDataFreshness } from '../crawl/eastmoney.js';
 import { computeIndicators } from './indicators.js';
 import { buildSignalBoard } from './modules.js';
 import { describeFundFlow, estimateChipConcentration } from './marketMeta.js';
+import { sessionPhase, assessDataFreshness } from './session.js';
+
+export { sessionPhase };
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
-
-const OPEN1 = 9 * 60 + 30;
-const CLOSE1 = 11 * 60 + 30;
-const OPEN2 = 13 * 60;
-const CLOSE2 = 15 * 60;
-const TAIL_START = 14 * 60 + 30;
-const SESSION_MINUTES = 240;
 
 function round2(n) {
   return Math.round(Number(n) * 100) / 100;
@@ -37,85 +33,6 @@ export function limitPct(code) {
   if (/^(30|68)/.test(c)) return 20;
   if (/^(4|8)/.test(c)) return 30;
   return 10;
-}
-
-/**
- * 当前处于哪个交易时段 + 已过去多少交易时间
- * ratio 用于把盘中累计量折算成全天量
- */
-export function sessionPhase(now = dayjs()) {
-  const dow = now.day();
-  const mins = now.hour() * 60 + now.minute();
-
-  if (dow === 0 || dow === 6) {
-    return {
-      phase: 'weekend',
-      label: '周末非交易日',
-      elapsed: SESSION_MINUTES,
-      ratio: 1,
-      isTail: false,
-      live: false,
-      note: '非交易日，以下按最近一个交易日收盘数据演练',
-    };
-  }
-  if (mins < OPEN1) {
-    return {
-      phase: 'pre',
-      label: '未开盘',
-      elapsed: 0,
-      ratio: 0,
-      isTail: false,
-      live: false,
-      note: '尚未开盘，当日量能未知，以下按上一交易日收盘数据演练',
-    };
-  }
-  if (mins < CLOSE1) {
-    const elapsed = mins - OPEN1;
-    return {
-      phase: 'morning',
-      label: '早盘',
-      elapsed,
-      ratio: elapsed / SESSION_MINUTES,
-      isTail: false,
-      live: true,
-      note: `距尾盘还有约 ${CLOSE2 - mins} 分钟，量能已按当前进度折算，午后可能明显变化`,
-    };
-  }
-  if (mins < OPEN2) {
-    return {
-      phase: 'lunch',
-      label: '午间休市',
-      elapsed: 120,
-      ratio: 0.5,
-      isTail: false,
-      live: true,
-      note: '仅半场数据，午后走势可能改变结论',
-    };
-  }
-  if (mins < CLOSE2) {
-    const elapsed = 120 + (mins - OPEN2);
-    const isTail = mins >= TAIL_START;
-    return {
-      phase: isTail ? 'tail' : 'afternoon',
-      label: isTail ? '尾盘时段' : '午后',
-      elapsed,
-      ratio: elapsed / SESSION_MINUTES,
-      isTail,
-      live: true,
-      note: isTail
-        ? `正处尾盘决策窗口，距收盘约 ${CLOSE2 - mins} 分钟`
-        : `未到尾盘（14:30 开始），距收盘约 ${CLOSE2 - mins} 分钟，结论可能变化`,
-    };
-  }
-  return {
-    phase: 'closed',
-    label: '已收盘',
-    elapsed: SESSION_MINUTES,
-    ratio: 1,
-    isTail: false,
-    live: false,
-    note: '今日已收盘，以下为全天数据复盘，可作明日尾盘参考',
-  };
 }
 
 /**
@@ -497,6 +414,9 @@ export async function screenTailEnd({
   const phase = sessionPhase(now);
   onProgress?.(`时段：${phase.label} · ${phase.note}`);
 
+  const freshness = assessDataFreshness({ ...(await getDataFreshness()), now });
+  onProgress?.(freshness.text);
+
   onProgress?.('拉取全市场快照...');
   const stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
 
@@ -618,6 +538,7 @@ export async function screenTailEnd({
 
   return {
     phase,
+    freshness,
     market,
     scanned: stocks.length,
     prescreened: pre.length,

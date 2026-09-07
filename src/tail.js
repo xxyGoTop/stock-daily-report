@@ -53,7 +53,7 @@ function line(ch = '─', n = 68) {
 function render(result) {
   const out = [];
   const p = (s = '') => out.push(s);
-  const { phase, market, candidates } = result;
+  const { phase, market, candidates, freshness } = result;
 
   p('');
   p('╔══════════════════════════════════════════════════════════════╗');
@@ -61,6 +61,7 @@ function render(result) {
   p('╚══════════════════════════════════════════════════════════════╝');
   p(`生成时间：${result.generatedAt}`);
   p(`交易时段：${phase.label} · ${phase.note}`);
+  if (freshness) p(`${freshness.warn ? '⚠ 数据新鲜度' : '数据新鲜度'}：${freshness.text}`);
   if (!phase.isTail) {
     p('⚠ 当前不在 14:30~15:00 尾盘窗口，以下结果仅作准备/复盘，实际下单前请重新运行。');
   }

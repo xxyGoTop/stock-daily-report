@@ -215,51 +215,115 @@ async function fetchKlinesEm(code, limit, market) {
 
 const lastDate = (kl) => (kl.length ? String(kl[kl.length - 1].date).slice(0, 10) : '');
 
+const KLINE_SOURCES = {
+  sina: (code, limit, market) => fetchKlinesSina(toMarketSymbol(code, market), limit),
+  tencent: (code, limit, market) => fetchKlinesTencent(toMarketSymbol(code, market), limit),
+  em: (code, limit, market) => fetchKlinesEm(code, limit, market),
+};
+
 /**
- * 本次运行的「最新交易日」基准。
+ * 实时行情时钟：判断市场行情已经走到哪一天。
  *
- * 新浪的日K在盘中不含当天那根，收盘后才补上；腾讯/东财盘中就有。
- * 不去猜交易日历，而是拿上证指数在三个源里各探一次、取最大日期作为基准，
- * 之后每只标的都要求达到这个日期，达不到就换源。
+ * 走的是 push2 的单只行情接口，和三个K线接口都不是同一条链路——
+ * K线源集体降级时它通常还活着，用来交叉验证K线是不是真的滞后了。
  */
-let baselineDate = null;
-let baselinePromise = null;
+export async function fetchMarketClock() {
+  for (const host of CLIST_HOSTS) {
+    try {
+      const data = await fetchJson(`${host}/api/qt/stock/get?secid=1.000001&fields=f43,f86,f58`, {
+        retries: 1,
+      });
+      const ts = Number(data?.data?.f86);
+      if (!Number.isFinite(ts) || ts <= 0) continue;
+      const d = new Date(ts * 1000);
+      const pad = (n) => String(n).padStart(2, '0');
+      return {
+        date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
+        time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
+      };
+    } catch {
+      /* next host */
+    }
+  }
+  return null;
+}
 
-async function resolveBaselineDate() {
-  if (baselineDate !== null) return baselineDate;
-  if (baselinePromise) return baselinePromise;
+/**
+ * 本次运行的取数策略：哪个源最新、按什么顺序试。
+ *
+ * 新浪的日K在盘中不含当天那根（收盘后才补），腾讯/东财盘中就有；
+ * 但腾讯有 WAF 限流、东财节点时有不可用。所以不写死顺序，
+ * 而是拿上证指数在三个源各探一次，按「日期新→响应快」排序。
+ */
+let probeState = null;
+let probePromise = null;
+const failStreak = { sina: 0, tencent: 0, em: 0 };
+const deadSources = new Set();
 
-  baselinePromise = (async () => {
-    const dates = [];
-    const probes = [
-      fetchKlinesTencent('sh000001', 5),
-      fetchKlinesEm('000001', 5, 'sh'),
-      fetchKlinesSina('sh000001', 5),
-    ];
-    for (const p of probes) {
+const MAX_FAIL_STREAK = 4;
+
+async function resolveProbe() {
+  if (probeState) return probeState;
+  if (probePromise) return probePromise;
+
+  probePromise = (async () => {
+    const results = [];
+    for (const [name, load] of Object.entries(KLINE_SOURCES)) {
+      const t0 = Date.now();
       try {
-        const kl = await p;
+        const kl = await load('000001', 5, 'sh');
         const d = lastDate(kl);
-        if (d) dates.push(d);
+        if (d) results.push({ name, date: d, ms: Date.now() - t0 });
+        else results.push({ name, date: '', ms: Date.now() - t0 });
       } catch {
-        /* 该源不可用 */
+        results.push({ name, date: '', ms: Date.now() - t0 });
       }
     }
-    baselineDate = dates.length ? dates.sort()[dates.length - 1] : '';
-    return baselineDate;
+
+    // 日期新的优先，同日期比响应速度；探测失败的排最后
+    results.sort((a, b) => {
+      if (a.date !== b.date) return a.date < b.date ? 1 : -1;
+      return a.ms - b.ms;
+    });
+
+    const dates = results.map((r) => r.date).filter(Boolean);
+    const klineDate = dates.length ? dates.sort()[dates.length - 1] : '';
+    const clock = await fetchMarketClock();
+
+    probeState = {
+      klineDate,
+      quoteDate: clock?.date || '',
+      quoteTime: clock?.time || '',
+      order: results.map((r) => r.name),
+      sources: results,
+    };
+    return probeState;
   })();
 
-  return baselinePromise;
+  return probePromise;
 }
 
 /** 供诊断/测试重置探测缓存 */
-export function resetKlineBaseline() {
-  baselineDate = null;
-  baselinePromise = null;
+export function resetKlineProbe() {
+  probeState = null;
+  probePromise = null;
+  deadSources.clear();
+  for (const k of Object.keys(failStreak)) failStreak[k] = 0;
+}
+
+/** 报告用：K线基准交易日 + 实时行情日期（两条独立链路） */
+export async function getDataFreshness() {
+  const p = await resolveProbe();
+  return {
+    klineDate: p.klineDate,
+    quoteDate: p.quoteDate,
+    quoteTime: p.quoteTime,
+    sources: p.sources,
+  };
 }
 
 export async function getKlineBaselineDate() {
-  return resolveBaselineDate();
+  return (await resolveProbe()).klineDate;
 }
 
 /**
@@ -273,27 +337,24 @@ export async function getKlineBaselineDate() {
  */
 export async function fetchKlines(code, { limit = 120, market } = {}) {
   const c = String(code).padStart(6, '0');
-  const symbol = toMarketSymbol(c, market);
-  const baseline = await resolveBaselineDate();
+  const { klineDate, order } = await resolveProbe();
 
-  const sources = [
-    () => fetchKlinesTencent(symbol, limit),
-    () => fetchKlinesEm(c, limit, market),
-    () => fetchKlinesSina(symbol, limit),
-  ];
-
-  // 拿不到当日数据时，保留各源里最新的那份兜底，而不是直接返回空
+  // 拿不到达标数据时，保留各源里最新的那份兜底，而不是直接返回空
   let best = [];
-  for (const load of sources) {
+  for (const name of order) {
+    if (deadSources.has(name)) continue;
     let kl = [];
     try {
-      kl = await load();
+      kl = await KLINE_SOURCES[name](c, limit, market);
+      failStreak[name] = 0;
     } catch {
+      // 某个源连续挂掉就本次运行内不再尝试，否则每只票都要白等它重试
+      if (++failStreak[name] >= MAX_FAIL_STREAK) deadSources.add(name);
       continue;
     }
     if (kl.length < 10) continue;
     const d = lastDate(kl);
-    if (!baseline || d >= baseline) return kl;
+    if (!klineDate || d >= klineDate) return kl;
     if (d > lastDate(best)) best = kl;
   }
   return best;
