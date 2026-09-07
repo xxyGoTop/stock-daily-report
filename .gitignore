@@ -1,5 +1,9 @@
 node_modules/
-output/
+
+# 必须写成 /output/ 锚定到仓库根目录。
+# 写 output/ 会匹配任意层级的同名目录，把 src/output/ 里的报告渲染源码也一起忽略掉
+/output/
+
 data/trades.json
 data/strategy-insights.json
 *.log
