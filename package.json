@@ -12,7 +12,9 @@
     "journal": "node src/journal/server.js --open",
     "xueqiu:login": "node scripts/xueqiu-login.js",
     "note": "node src/note.js",
-    "便签": "node src/note.js"
+    "便签": "node src/note.js",
+    "tail": "node src/tail.js",
+    "尾盘": "node src/tail.js"
   },
   "engines": {
     "node": ">=18"
