@@ -12,21 +12,23 @@ import { fetchKlines } from '../crawl/eastmoney.js';
 import { sma, isMaRising, computeIndicators } from './indicators.js';
 import { fetchSectorLeaders } from './marketTheme.js';
 
+// market 必须显式写：沪市指数也以 0 开头，按代码猜会拿到深市同号个股
+// （sz000001 是平安银行、sz000016 是深康佳A、sz000300 根本不存在）
 const INDEX_LIST = [
-  { code: '000001', name: '上证指数' },
-  { code: '399001', name: '深证成指' },
-  { code: '399106', name: '深证综指' },
-  { code: '399006', name: '创业板指' },
-  { code: '000300', name: '沪深300' },
-  { code: '399005', name: '中小板指' },
-  { code: '000016', name: '上证50' },
+  { code: '000001', name: '上证指数', market: 'sh' },
+  { code: '399001', name: '深证成指', market: 'sz' },
+  { code: '399106', name: '深证综指', market: 'sz' },
+  { code: '399006', name: '创业板指', market: 'sz' },
+  { code: '000300', name: '沪深300', market: 'sh' },
+  { code: '399005', name: '中小板指', market: 'sz' },
+  { code: '000016', name: '上证50', market: 'sh' },
 ];
 
 /** 用户关注的可交易 ETF（技术线买卖） */
 const ETF_LIST = [
-  { code: '510300', name: '沪深300ETF', theme: '宽基' },
-  { code: '159516', name: '半导体设备ETF', theme: '半导体设备' },
-  { code: '517120', name: '创新药ETF', theme: '创新药' },
+  { code: '510300', name: '沪深300ETF', theme: '宽基', market: 'sh' },
+  { code: '159516', name: '半导体设备ETF', theme: '半导体设备', market: 'sz' },
+  { code: '517120', name: '创新药ETF', theme: '创新药', market: 'sh' },
 ];
 
 function hhv(values, n) {
@@ -270,7 +272,7 @@ export async function analyzeIndexBuySignals({ onProgress } = {}) {
   const indices = [];
   for (const meta of INDEX_LIST) {
     try {
-      const kl = await fetchKlines(meta.code, { limit: 120 });
+      const kl = await fetchKlines(meta.code, { limit: 120, market: meta.market });
       indices.push(analyzeOneIndex(kl, meta));
     } catch {
       indices.push({
@@ -287,7 +289,7 @@ export async function analyzeIndexBuySignals({ onProgress } = {}) {
   const etfs = [];
   for (const meta of ETF_LIST) {
     try {
-      const kl = await fetchKlines(meta.code, { limit: 120 });
+      const kl = await fetchKlines(meta.code, { limit: 120, market: meta.market });
       if (!kl.length) {
         etfs.push({
           ...meta,

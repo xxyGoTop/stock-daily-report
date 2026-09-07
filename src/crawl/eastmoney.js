@@ -6,11 +6,15 @@
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
+// push2delay 是延时节点，只作兜底
 const CLIST_HOSTS = [
-  'https://push2delay.eastmoney.com',
   'https://push2.eastmoney.com',
   'https://82.push2.eastmoney.com',
+  'https://push2delay.eastmoney.com',
 ];
+
+// push2delay 对 kline 接口返回空数组，必须排在 push2his 之后
+const KLINE_HOSTS = ['https://push2his.eastmoney.com', 'https://push2delay.eastmoney.com'];
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -50,18 +54,27 @@ async function fetchClist(query) {
   throw lastErr;
 }
 
-/** secid: 沪市 1.xxxxxx / 深市 0.xxxxxx（含 5xxxxx 沪市ETF） */
-export function toSecId(code) {
+/**
+ * 按代码首位猜市场：6/9/5 → 沪，其余 → 深
+ * 注意：沪市指数（000001 上证、000300 沪深300、000016 上证50）也以 0 开头，
+ * 会被误判成深市个股（sz000001 是平安银行），所以指数必须由调用方显式传 market
+ */
+function guessMarket(code) {
   const c = String(code).padStart(6, '0');
-  if (c.startsWith('6') || c.startsWith('9') || c.startsWith('5')) return `1.${c}`;
-  return `0.${c}`;
+  return /^[695]/.test(c) ? 'sh' : 'sz';
+}
+
+/** secid: 沪市 1.xxxxxx / 深市 0.xxxxxx（含 5xxxxx 沪市ETF） */
+export function toSecId(code, market) {
+  const c = String(code).padStart(6, '0');
+  const m = market || guessMarket(c);
+  return m === 'sh' ? `1.${c}` : `0.${c}`;
 }
 
 /** 新浪/腾讯行情前缀 */
-export function toMarketSymbol(code) {
+export function toMarketSymbol(code, market) {
   const c = String(code).padStart(6, '0');
-  if (c.startsWith('6') || c.startsWith('9') || c.startsWith('5')) return `sh${c}`;
-  return `sz${c}`;
+  return `${market || guessMarket(c)}${c}`;
 }
 
 /**
@@ -167,64 +180,123 @@ export async function fetchStStocks({ pages = 8, pageSize = 100 } = {}) {
   return [...map.values()];
 }
 
+async function fetchKlinesEm(code, limit, market) {
+  const secid = toSecId(code, market);
+  const path =
+    `/api/qt/stock/kline/get?secid=${secid}` +
+    `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` +
+    `&klt=101&fqt=1&end=20500101&lmt=${limit}`;
+  for (const host of KLINE_HOSTS) {
+    try {
+      const data = await fetchJson(host + path, { retries: 1 });
+      const raw = data?.data?.klines || [];
+      if (!raw.length) continue;
+      return raw.map((line) => {
+        const p = line.split(',');
+        return {
+          date: p[0],
+          open: +p[1],
+          close: +p[2],
+          high: +p[3],
+          low: +p[4],
+          volume: +p[5],
+          amount: +p[6],
+          amplitude: +p[7],
+          changePct: +p[8],
+          turnover: +p[9],
+        };
+      });
+    } catch {
+      /* next host */
+    }
+  }
+  return [];
+}
+
+const lastDate = (kl) => (kl.length ? String(kl[kl.length - 1].date).slice(0, 10) : '');
+
 /**
- * 日K线（优先新浪，失败回退腾讯；东财 his 节点在部分网络下不可用）
- * 返回 [{ date, open, close, high, low, volume, amount, amplitude, changePct, turnover }]
+ * 本次运行的「最新交易日」基准。
+ *
+ * 新浪的日K在盘中不含当天那根，收盘后才补上；腾讯/东财盘中就有。
+ * 不去猜交易日历，而是拿上证指数在三个源里各探一次、取最大日期作为基准，
+ * 之后每只标的都要求达到这个日期，达不到就换源。
  */
-export async function fetchKlines(code, { limit = 120 } = {}) {
-  const c = String(code).padStart(6, '0');
-  const sinaSymbol = toMarketSymbol(c);
+let baselineDate = null;
+let baselinePromise = null;
 
-  try {
-    const kl = await fetchKlinesSina(sinaSymbol, limit);
-    if (kl.length >= 10) return kl;
-  } catch {
-    /* fall through */
-  }
+async function resolveBaselineDate() {
+  if (baselineDate !== null) return baselineDate;
+  if (baselinePromise) return baselinePromise;
 
-  try {
-    const kl = await fetchKlinesTencent(sinaSymbol, limit);
-    if (kl.length) return kl;
-  } catch {
-    /* fall through */
-  }
-
-  // 最后尝试东财
-  try {
-    const secid = toSecId(code);
-    const path =
-      `/api/qt/stock/kline/get?secid=${secid}` +
-      `&fields1=f1,f2,f3,f4,f5,f6&fields2=f51,f52,f53,f54,f55,f56,f57,f58,f59,f60,f61` +
-      `&klt=101&fqt=1&end=20500101&lmt=${limit}`;
-    for (const host of ['https://push2delay.eastmoney.com', 'https://push2his.eastmoney.com']) {
+  baselinePromise = (async () => {
+    const dates = [];
+    const probes = [
+      fetchKlinesTencent('sh000001', 5),
+      fetchKlinesEm('000001', 5, 'sh'),
+      fetchKlinesSina('sh000001', 5),
+    ];
+    for (const p of probes) {
       try {
-        const data = await fetchJson(host + path, { retries: 1 });
-        const raw = data?.data?.klines || [];
-        if (!raw.length) continue;
-        return raw.map((line) => {
-          const p = line.split(',');
-          return {
-            date: p[0],
-            open: +p[1],
-            close: +p[2],
-            high: +p[3],
-            low: +p[4],
-            volume: +p[5],
-            amount: +p[6],
-            amplitude: +p[7],
-            changePct: +p[8],
-            turnover: +p[9],
-          };
-        });
+        const kl = await p;
+        const d = lastDate(kl);
+        if (d) dates.push(d);
       } catch {
-        /* next host */
+        /* 该源不可用 */
       }
     }
-  } catch {
-    /* ignore */
-  }
+    baselineDate = dates.length ? dates.sort()[dates.length - 1] : '';
+    return baselineDate;
+  })();
 
-  return [];
+  return baselinePromise;
+}
+
+/** 供诊断/测试重置探测缓存 */
+export function resetKlineBaseline() {
+  baselineDate = null;
+  baselinePromise = null;
+}
+
+export async function getKlineBaselineDate() {
+  return resolveBaselineDate();
+}
+
+/**
+ * 日K线：多源取「最新」而非「最先成功」
+ *
+ * @param {string} code 6位代码
+ * @param {object} opts
+ * @param {number} opts.limit  取多少根
+ * @param {'sh'|'sz'} opts.market  指数必须显式指定，否则 000001 会被当成平安银行
+ * @returns [{ date, open, close, high, low, volume, amount, amplitude, changePct, turnover }]
+ */
+export async function fetchKlines(code, { limit = 120, market } = {}) {
+  const c = String(code).padStart(6, '0');
+  const symbol = toMarketSymbol(c, market);
+  const baseline = await resolveBaselineDate();
+
+  const sources = [
+    () => fetchKlinesTencent(symbol, limit),
+    () => fetchKlinesEm(c, limit, market),
+    () => fetchKlinesSina(symbol, limit),
+  ];
+
+  // 拿不到当日数据时，保留各源里最新的那份兜底，而不是直接返回空
+  let best = [];
+  for (const load of sources) {
+    let kl = [];
+    try {
+      kl = await load();
+    } catch {
+      continue;
+    }
+    if (kl.length < 10) continue;
+    const d = lastDate(kl);
+    if (!baseline || d >= baseline) return kl;
+    if (d > lastDate(best)) best = kl;
+  }
+  return best;
 }
 
 async function fetchKlinesSina(symbol, limit) {
