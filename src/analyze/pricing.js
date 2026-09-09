@@ -134,10 +134,76 @@ export function shortTermPrices(stock, ind) {
 }
 
 /**
- * 困境反转 / 事件驱动（区间仍收窄，仓位更严）
+ * ST / 重整等事件股的五日线建仓适合度（与正股同一硬门槛：站上且向上）
+ * suitable: true | 'wait' | false | null(数据不足)
  */
-export function eventDrivenPrices(latest, quote, { isST = false } = {}) {
+export function evalEventMa5Entry(ind) {
+  if (!ind || ind.ma5 == null) {
+    return {
+      suitable: null,
+      ma5Ok: false,
+      label: '技术数据不足',
+      text: '五日线数据不足，暂无法判断是否适合建仓',
+      ma5: null,
+      bias5: null,
+    };
+  }
+
+  const ma5r = round2(ind.ma5);
+  const bias5 = ind.bias5 != null ? ind.bias5 : null;
+  const rising = !!ind.ma5Rising;
+  const above = !!ind.aboveMa5;
+
+  if (ind.brokenMa5 || !above) {
+    return {
+      suitable: false,
+      ma5Ok: false,
+      label: '暂不适合建仓',
+      text: `未站稳五日线(MA5 ${ma5r}${rising ? '向上' : '走平/向下'})，技术线不适合建仓，等重新站稳再议`,
+      ma5: ma5r,
+      bias5,
+    };
+  }
+  if (!rising) {
+    return {
+      suitable: false,
+      ma5Ok: false,
+      label: '暂不适合建仓',
+      text: `虽在MA5(${ma5r})上方，但五日线走平/向下，技术线暂不适合建仓`,
+      ma5: ma5r,
+      bias5,
+    };
+  }
+  if (bias5 != null && bias5 > 6) {
+    return {
+      suitable: 'wait',
+      ma5Ok: true,
+      label: '适合建仓(等回踩)',
+      text: `站上向上五日线(MA5 ${ma5r})，但乖离偏高${bias5.toFixed(1)}%，适合等回踩MA5附近再建仓`,
+      ma5: ma5r,
+      bias5,
+    };
+  }
+  return {
+    suitable: true,
+    ma5Ok: true,
+    label: '适合建仓',
+    text: `站上向上五日线(MA5 ${ma5r})${
+      bias5 != null ? `，乖离${bias5 >= 0 ? '+' : ''}${bias5.toFixed(1)}%` : ''
+    }，技术线适合建仓`,
+    ma5: ma5r,
+    bias5,
+  };
+}
+
+/**
+ * 困境反转 / 事件驱动（区间仍收窄，仓位更严）
+ * 叠加五日线判断：事件决定「值不值得跟踪」，技术线决定「此刻能不能建仓」
+ */
+export function eventDrivenPrices(latest, quote, { isST = false, ind = null } = {}) {
   const price = latest?.close || quote?.price || 0;
+  const tech = evalEventMa5Entry(ind);
+
   if (!price) {
     return {
       action: '跟踪',
@@ -149,23 +215,71 @@ export function eventDrivenPrices(latest, quote, { isST = false } = {}) {
       sellReason: '设好最大亏损承受后再动手',
       buyPlan: '暂不定价',
       sellPlan: '暂不定价',
+      techEntry: tech.label,
+      techEntryText: tech.text,
+      techSuitable: tech.suitable,
+      ma5Ok: tech.ma5Ok,
+      refMa5: tech.ma5,
     };
   }
 
   // ST 约 ±1.2%，正股事件约 ±1.5%（相对原 6%~10% 大幅收窄）
   const band = isST ? 0.012 : 0.015;
-  const buyLow = round2(price * (1 - band));
-  const buyHigh = round2(price * (1 + band * 0.4));
-  const sellStop = round2(price * (1 - band * 1.2));
+  let buyLow = round2(price * (1 - band));
+  let buyHigh = round2(price * (1 + band * 0.4));
+  const eventStop = round2(price * (1 - band * 1.2));
+  const ma5Stop = tech.ma5 != null ? round2(tech.ma5 * 0.997) : null;
+  const sellStop = ma5Stop != null ? Math.min(eventStop, ma5Stop) : eventStop;
   const t1 = round2(price * (1 + band * 1.5));
   const t2 = round2(price * (1 + band * 2.2));
-  const entryMode = '分2批';
-  const buyTrigger = `站稳${round2(price)}下方不追`;
+  let entryMode = '分2批';
+  let buyTrigger = `站稳${round2(price)}下方不追`;
+  let action = '小仓博弈';
+  let buyPrice = `${buyLow}~${buyHigh}·${entryMode}`;
+  let buyReason = `事件高风险：仅${buyLow}~${buyHigh}分2批试错（各半仓），单票仓位从严，不一次打满`;
+  const sellReason = `节点落空/问询恶化或跌破五日线：跌破${sellStop}清仓；兑现或到${t1}先减半，余看${t2}`;
+  const sellPrice = `破${sellStop}卖/${t1}减半/${t2}`;
+
+  if (tech.suitable === false) {
+    action = '观望·等五日线';
+    entryMode = '不买';
+    buyTrigger = tech.ma5 != null ? `等站稳向上MA5(${tech.ma5})` : '等站稳五日线';
+    buyLow = 0;
+    buyHigh = 0;
+    buyPrice =
+      tech.ma5 != null
+        ? ind?.aboveMa5 && !ind?.ma5Rising
+          ? `不买(MA5 ${tech.ma5}走平/向下)`
+          : `不买(未站稳MA5 ${tech.ma5})`
+        : '不买(五日线未到位)';
+    buyReason = `${tech.text}；事件可继续跟踪，技术线到位前不建仓`;
+  } else if (tech.suitable === 'wait' && tech.ma5 != null) {
+    const tick = Math.max(round2(price * 0.006), 0.02);
+    buyLow = round2(tech.ma5 - tick * 0.5);
+    buyHigh = round2(tech.ma5 + tick * 0.8);
+    buyTrigger = `回踩站稳${tech.ma5}`;
+    entryMode = '分2批';
+    action = '小仓博弈·等回踩';
+    buyPrice = `${buyTrigger}(${buyLow}~${buyHigh})·${entryMode}`;
+    buyReason = `${tech.text}；事件仓位从严，仅回踩区间${buyLow}~${buyHigh}分2批试错`;
+  } else if (tech.suitable === true && tech.ma5 != null) {
+    const tick = Math.max(round2(price * 0.006), 0.02);
+    // 事件窄带与 MA5 附近取交集，避免追高脱离五日线
+    buyLow = round2(Math.max(price * (1 - band), tech.ma5 - tick * 0.3));
+    buyHigh = round2(Math.min(price * (1 + band * 0.4), tech.ma5 + tick));
+    if (buyHigh < buyLow) buyHigh = round2(buyLow + tick);
+    buyTrigger = `站稳${tech.ma5}`;
+    action = '小仓博弈';
+    buyPrice = `${buyLow}~${buyHigh}·${entryMode}`;
+    buyReason = `${tech.text}；事件高风险：仅${buyLow}~${buyHigh}分2批试错（各半仓），单票仓位从严`;
+  } else if (tech.suitable == null) {
+    buyReason = `${tech.text}；${buyReason}`;
+  }
 
   return {
-    action: '小仓博弈',
-    buyPrice: `${buyLow}~${buyHigh}·${entryMode}`,
-    sellPrice: `破${sellStop}卖/${t1}减半/${t2}`,
+    action,
+    buyPrice,
+    sellPrice,
     buyLow,
     buyHigh,
     sellStop,
@@ -173,9 +287,14 @@ export function eventDrivenPrices(latest, quote, { isST = false } = {}) {
     sellTarget1: t1,
     buyTrigger,
     entryMode,
-    buyReason: `事件高风险：仅${buyLow}~${buyHigh}分2批试错（各半仓），单票仓位从严，不一次打满`,
-    sellReason: `节点落空/问询恶化：跌破${sellStop}清仓；兑现或到${t1}先减半，余看${t2}`,
-    buyPlan: `事件高风险：仅${buyLow}~${buyHigh}分2批试错（各半仓），单票仓位从严，不一次打满`,
-    sellPlan: `节点落空/问询恶化：跌破${sellStop}清仓；兑现或到${t1}先减半，余看${t2}`,
+    buyReason,
+    sellReason,
+    buyPlan: buyReason,
+    sellPlan: sellReason,
+    techEntry: tech.label,
+    techEntryText: tech.text,
+    techSuitable: tech.suitable,
+    ma5Ok: tech.ma5Ok,
+    refMa5: tech.ma5,
   };
 }

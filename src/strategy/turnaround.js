@@ -392,7 +392,7 @@ function pickCandidates(ops, season, maxCandidates, { preferTypes = [] } = {}) {
 }
 
 function enrichCandidate(c) {
-  const prices = eventDrivenPrices(c.latest, c.quote, { isST: c.isST });
+  const prices = eventDrivenPrices(c.latest, c.quote, { isST: c.isST, ind: c.ind || null });
   const progress = c.progress || inferProgress(c.events, c.types);
   const majorEvents = c.majorEvents || listMajorEvents(c.events, 6);
   const signalBoard =
@@ -402,11 +402,9 @@ function enrichCandidate(c) {
   let action = prices.action;
   let buyReason = prices.buyReason;
   let sellReason = prices.sellReason;
+  let buyPrice = prices.buyPrice;
 
-  if (c.maxCertainty >= 4 && !c.riskFlags.length) {
-    action = '小仓买入关注';
-    buyReason = `${progress.progressText}；确定性${c.maxCertainty}/5。${prices.buyReason}`;
-  } else if (c.riskFlags.some((f) => f.includes('问询'))) {
+  if (c.riskFlags.some((f) => f.includes('问询'))) {
     action = '观望';
     buyReason = '存在问询/补充材料，暂缓买入';
     sellReason = '若已持仓，问询反复则优先减仓';
@@ -414,6 +412,20 @@ function enrichCandidate(c) {
     action = '卖出/回避';
     buyReason = '事件终止信号，不买入';
     sellReason = '节点落空，立即离场';
+  } else if (c.maxCertainty >= 4) {
+    // 高确定性仍要过五日线：事件决定跟踪优先级，技术线决定此刻能否建仓
+    if (prices.techSuitable === true) {
+      action = '小仓买入关注';
+      buyReason = `${progress.progressText}；确定性${c.maxCertainty}/5。${prices.buyReason}`;
+    } else if (prices.techSuitable === 'wait') {
+      action = '小仓关注·等回踩';
+      buyReason = `${progress.progressText}；确定性${c.maxCertainty}/5，${prices.techEntryText}。${prices.buyReason}`;
+      buyPrice = prices.buyPrice;
+    } else {
+      action = '事件跟踪·等五日线';
+      buyReason = `${progress.progressText}；确定性${c.maxCertainty}/5，但${prices.techEntryText}。事件可跟踪，技术线到位前不建仓`;
+      buyPrice = prices.buyPrice;
+    }
   }
 
   const quote = c.quote || {};
@@ -441,10 +453,14 @@ function enrichCandidate(c) {
     fundFlow,
     chips,
     action,
-    buyPrice: prices.buyPrice,
+    buyPrice,
     sellPrice: prices.sellPrice,
     buyReason,
     sellReason,
+    techEntry: prices.techEntry,
+    techEntryText: prices.techEntryText,
+    techSuitable: prices.techSuitable,
+    ma5Ok: prices.ma5Ok,
     progress: progress.progressText,
     stageLabel: progress.stageLabel,
     nextAction: progress.nextAction,
@@ -454,6 +470,17 @@ function enrichCandidate(c) {
     timeline: progress.timeline,
     majorEvents,
     signalBoard,
+    indicators: c.ind
+      ? {
+          ma5: c.ind.ma5,
+          ma10: c.ind.ma10,
+          ma20: c.ind.ma20,
+          bias5: c.ind.bias5,
+          aboveMa5: c.ind.aboveMa5,
+          ma5Rising: c.ind.ma5Rising,
+          bullAlign: c.ind.bullAlign,
+        }
+      : null,
     titles: c.titles.slice(0, 5),
     events: c.events.slice(0, 8),
     latest: c.latest || null,

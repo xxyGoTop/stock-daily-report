@@ -191,7 +191,7 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
         ? eventDrivenPrices(
             { close: stock.price, changePct: stock.changePct },
             quote,
-            { isST }
+            { isST, ind }
           )
         : shortTermPrices(stock, ind || { price: stock.price, ma5: stock.price });
 
@@ -238,6 +238,10 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
       sellPrice: prices.sellPrice,
       buyReason,
       sellReason,
+      techEntry: prices.techEntry,
+      techEntryText: prices.techEntryText,
+      techSuitable: prices.techSuitable,
+      ma5Ok: prices.ma5Ok,
       progress: progress.progressText,
       stageLabel: progress.stageLabel,
       nextAction: progress.nextAction,

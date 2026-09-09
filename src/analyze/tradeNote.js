@@ -122,7 +122,7 @@ async function enrichOne(item) {
       prices = eventDrivenPrices(
         { close: stock.price, changePct: stock.changePct },
         stock,
-        { isST }
+        { isST, ind }
       );
     } else {
       prices = shortTermPrices(stock, ind || { price: stock.price, ma5: stock.price });
@@ -154,6 +154,10 @@ async function enrichOne(item) {
       sellReason: prices.sellReason,
       entryMode: prices.entryMode,
       buyTrigger: prices.buyTrigger,
+      techEntry: prices.techEntry,
+      techEntryText: prices.techEntryText,
+      techSuitable: prices.techSuitable,
+      ma5Ok: prices.ma5Ok,
       signalBoard: card?.signalBoard || buildSignalBoard(ind),
     };
   }

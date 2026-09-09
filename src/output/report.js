@@ -28,6 +28,9 @@ function printCard(p, c, i) {
       `得分${c.score ?? '-'}  价${fmtPrice(c.price)} ${fmtPct(c.changePct)}`
   );
   p(`      固定指标：${sb.biasText || '乖离:-'} ｜ ${sb.macdText || 'MACD:-'}`);
+  if (c.techEntry || c.techEntryText) {
+    p(`      技术建仓：${c.techEntry || '-'}${c.techEntryText ? `｜${c.techEntryText}` : ''}`);
+  }
   p(`      行业板块：${c.industry || '未知行业'}${c.region ? ` · ${c.region}` : ''}`);
   p(`      资金流入：${c.fundFlow?.text || '-'}`);
   p(`      筹码集中：${c.chips?.text || '-'}`);

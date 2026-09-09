@@ -28,6 +28,7 @@ function fmtPrice(v) {
 
 function actionClass(action = '') {
   if (/卖出|止损|回避/.test(action)) return 'tag-sell';
+  if (/等五日线|等回踩|观望|不买/.test(action)) return 'tag-watch';
   if (/买入|低吸|博弈|关注/.test(action)) return 'tag-buy';
   return 'tag-watch';
 }
@@ -91,6 +92,13 @@ function rowHtml(c, idx, board) {
           ${tao}${rps}
           ${c.category ? `<span class="pill soft">${esc(c.category)}</span>` : ''}
           ${c.certainty != null ? `<span class="pill soft">确定${esc(c.certainty)}/5</span>` : ''}
+          ${
+            c.techEntry
+              ? `<span class="pill ${
+                  c.techSuitable === true ? 'tao' : c.techSuitable === 'wait' ? 'soft' : ''
+                }">${esc(c.techEntry)}</span>`
+              : ''
+          }
           <span class="pill soft">分${esc(c.score ?? '-')}</span>
         </div>
         <div class="quote">
@@ -102,6 +110,11 @@ function rowHtml(c, idx, board) {
       <div class="signal-board">
         <div class="sig bias">${esc(sb.biasText || '乖离：-')}</div>
         <div class="sig macd ${sb.macdGolden ? 'hot' : sb.macdGreenShrinking ? 'warm' : ''}">${esc(sb.macdText || 'MACD：-')}</div>
+        ${
+          c.techEntryText
+            ? `<div class="sig tech">技术建仓：${esc(c.techEntryText)}</div>`
+            : ''
+        }
       </div>
 
       <div class="meta-board">

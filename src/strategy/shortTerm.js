@@ -260,8 +260,20 @@ function enrichTechCard(s, tag = '买入') {
 
 function enrichEventCard(row) {
   const progress = row.progress || inferProgress(row.events, row.types);
-  const prices = eventDrivenPrices(row.latest, row.quote, { isST: false });
+  const prices = eventDrivenPrices(row.latest, row.quote, {
+    isST: false,
+    ind: row.ind || null,
+  });
   const majorEvents = row.majorEvents || listMajorEvents(row.events, 6);
+
+  let action =
+    row.maxCertainty >= 4
+      ? prices.techSuitable === true
+        ? '事件驱动关注'
+        : prices.techSuitable === 'wait'
+          ? '事件关注·等回踩'
+          : '事件跟踪·等五日线'
+      : prices.action;
 
   return {
     code: row.code,
@@ -272,11 +284,15 @@ function enrichEventCard(row) {
     direction: progress.direction,
     category: '正股事件驱动',
     types: row.types,
-    action: row.maxCertainty >= 4 ? '事件驱动关注' : '事件跟踪',
+    action,
     buyPrice: prices.buyPrice,
     sellPrice: prices.sellPrice,
     buyReason: `${progress.progressText}。${prices.buyReason}`,
     sellReason: prices.sellReason,
+    techEntry: prices.techEntry,
+    techEntryText: prices.techEntryText,
+    techSuitable: prices.techSuitable,
+    ma5Ok: prices.ma5Ok,
     progress: progress.progressText,
     stageLabel: progress.stageLabel,
     nextAction: progress.nextAction,
