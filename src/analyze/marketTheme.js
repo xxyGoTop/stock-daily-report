@@ -121,8 +121,17 @@ export async function buildMarketBrief({
     if (hit) recommend.push(`${name}（候选加权高）`);
     else recommend.push(`${name}（季节性优先跟踪）`);
   }
+  if (shortCards.some((c) => (c.taoTags || []).includes('率先年新高'))) {
+    recommend.push('有个股率先一年新高：优先在主流板块里选，重点看当日涨幅榜第一版');
+  }
+  if (shortCards.some((c) => (c.taoTags || []).includes('深调高RPS回升'))) {
+    recommend.push('高RPS深调回升标的：第1/第2基底可参与，第3个基底起谨慎');
+  }
+  if (shortCards.some((c) => (c.taoTags || []).includes('顺向火车轨'))) {
+    recommend.push('顺向火车轨命中，优先看RPS250高、右侧年高、10日线下买点');
+  }
   if (shortCards.some((c) => (c.taoTags || []).includes('每日观察'))) {
-    recommend.push('每日观察选股（陶博士2.0）命中');
+    recommend.push('火车每日观察（高RPS年高附近）命中');
   }
   if (shortCards.some((c) => (c.taoTags || []).includes('蓝色钻石'))) {
     recommend.push('蓝色钻石观察池（等口袋支点，勿追涨）');

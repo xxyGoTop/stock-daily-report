@@ -183,6 +183,9 @@ export function buildThemeExpect(card, { hotKeys = [], hotSectors = [], hotNews 
 
   const tags = card.taoTags || [];
   if (tags.includes('每日观察')) parts.push('陶博士每日观察形态');
+  else if (tags.includes('率先年新高')) parts.push('率先一年新高，主升初段优先');
+  else if (tags.includes('深调高RPS回升')) parts.push('高RPS深调后回升，注意基底次数');
+  else if (tags.includes('顺向火车轨')) parts.push('顺向火车轨中线强势，偏好10日线下买点');
   else if (tags.includes('蓝色钻石')) parts.push('蓝色钻石观察池，等右侧口袋支点');
 
   const news = newsFor(hot.length ? hot : pool, hotNews);
@@ -331,7 +334,11 @@ export function buildMoveReason(card, { hotKeys = [], hotNews = [] } = {}) {
   // ── 事件 / 陶博士 ──
   const events = realEvents(card);
   if (events.length) add(90, `事件驱动：${events[0].slice(0, 34)}`);
-  if (card.taoTags?.includes('每日观察')) add(60, '命中陶博士每日观察形态（趋势+强度双过滤）');
+  if (card.taoTags?.includes('率先年新高')) add(64, '率先创一年新高（241005思路一，需有指数中期信号配合）');
+  if (card.taoTags?.includes('深调高RPS回升')) add(58, '高RPS深度调整后开始回升（241005思路二）');
+  if (card.taoTags?.includes('主流板块')) add(55, `主流板块${card.board?.name ? `（${card.board.name}）` : ''}，板块RPS5前列`);
+  if (card.taoTags?.includes('顺向火车轨')) add(62, '命中顺向火车轨（RPS+均线顺向+回撤可控）');
+  if (card.taoTags?.includes('每日观察')) add(60, '命中火车每日观察（高RPS+年高附近）');
   if (card.taoTags?.includes('蓝色钻石')) add(56, '蓝色钻石观察池，须等右侧口袋支点');
 
   drivers.sort((a, b) => b.w - a.w);

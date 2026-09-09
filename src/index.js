@@ -241,6 +241,10 @@ async function main() {
     console.log(`  √ 事件池 ${turnRaw.candidates.length} 只 · ${turnRaw.season.label}\n`);
   }
 
+  // 指数中期信号先算：陶博士 241005 提醒「一年新高」在无中期信号时多为假突破
+  const indexSignals = await analyzeIndexBuySignals({ onProgress: progress });
+  console.log(`  √ 指数信号：${indexSignals.marketSignal} · 可买指数 ${indexSignals.buyCount} 个`);
+
   if (runShort) {
     console.log('[正股] 五日线纯技术（不含事件股）');
     shortRaw = await runShortTermStrategy({
@@ -248,6 +252,8 @@ async function main() {
       scanPages: args.fast ? 4 : 8,
       detailLimit: args.fast ? 80 : 200,
       klineLimit: 260,
+      indexCanBuy: indexSignals.buyCount > 0,
+      fast: args.fast,
       onProgress: progress,
     });
     console.log(`  √ 正股 ${shortRaw.candidates.length} 只\n`);
@@ -260,6 +266,9 @@ async function main() {
         candidates: shortRaw.candidates,
         sellCards: shortRaw.sellCards || [],
         ops: shortRaw.ops,
+        observeFirstPage: shortRaw.observeFirstPage || [],
+        observeHitCount: shortRaw.observeHitCount || 0,
+        hotBoards: shortRaw.hotBoards || [],
         actions: summarizeShortTermActions(shortRaw),
       }
     : emptyShort();
@@ -314,8 +323,6 @@ async function main() {
   await maybeAttachXueqiu(uniq, args, progress);
 
   console.log('生成方向总结与 HTML 报告...');
-  const indexSignals = await analyzeIndexBuySignals({ onProgress: progress });
-  console.log(`  √ 指数信号：${indexSignals.marketSignal} · 可买指数 ${indexSignals.buyCount} 个`);
 
   const brief = await buildMarketBrief({
     shortCards: modules.plainStocks,
@@ -364,7 +371,7 @@ async function main() {
   };
   if (meta.freshness.warn) console.error(`  ⚠ ${meta.freshness.text}`);
 
-  const text = printReport({ modules, meta, turnaround, indexSignals, brief });
+  const text = printReport({ modules, meta, turnaround, indexSignals, brief, shortTerm });
   const html = renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, indexSignals });
 
   const payload = {
@@ -410,6 +417,9 @@ function emptyShort() {
     candidates: [],
     sellCards: [],
     ops: { buy: [], holdWatch: [], sell: [] },
+    observeFirstPage: [],
+    observeHitCount: 0,
+    hotBoards: [],
     actions: { today: [], tomorrow: [] },
   };
 }

@@ -60,7 +60,7 @@ function rowHtml(c, idx, board) {
   const tao = (c.taoTags || []).map((t) => `<span class="pill tao">${esc(t)}</span>`).join('');
   const rps =
     c.rps != null
-      ? `<span class="pill soft">RPS50 ${esc(c.rps.rps50)} / 120 ${esc(c.rps.rps120)}</span>`
+      ? `<span class="pill soft">RPS50 ${esc(c.rps.rps50)} / 120 ${esc(c.rps.rps120)} / 250 ${esc(c.rps.rps250)}</span>`
       : '';
   const xq = c.xueqiu;
   const xqHtml = !xq
@@ -241,6 +241,49 @@ function hotNewsHtml(list = []) {
     <h3>今日热点新闻 · ${Math.min(15, list.length)}条</h3>
     <ol class="hot-list">${items}</ol>
   </div>`;
+}
+
+/** 241005：主流板块 RPS5 + 当天涨幅榜第一版 */
+function taoPickHtml(shortTerm) {
+  const boards = shortTerm?.hotBoards || [];
+  const firstPage = shortTerm?.observeFirstPage || [];
+  if (!boards.length && !firstPage.length) return '';
+
+  const boardHtml = boards.length
+    ? `<div class="tao-boards">${boards
+        .map(
+          (b) =>
+            `<span class="pill tao">${esc(b.name)} <b>${esc(b.rps5.toFixed(0))}</b></span>`
+        )
+        .join('')}</div>`
+    : '';
+
+  const listHtml = firstPage.length
+    ? `<div class="tao-list">${firstPage
+        .map(
+          (c, i) => `<div class="tao-row">
+            <i>${String(i + 1).padStart(2, '0')}</i>
+            <b>${esc(c.code)}</b> ${esc(c.name)}
+            <span class="${(c.changePct ?? 0) >= 0 ? 'up' : 'down'}">${fmtPct(c.changePct)}</span>
+            <span class="pill soft">${esc((c.taoTags || []).join('/') || '-')}</span>
+            ${c.board?.name ? `<span class="pill soft">${esc(c.board.name)}</span>` : ''}
+          </div>`
+        )
+        .join('')}</div>`
+    : '';
+
+  return `
+    <section class="section">
+      <div class="section-head">
+        <h2>陶博士241005择股 · 当天交易日</h2>
+        <div class="hint">先选主流板块(板块RPS5) → 每日观察命中 ${esc(
+          shortTerm?.observeHitCount ?? 0
+        )} 只 → 只看当日涨幅榜第一版 ${esc(firstPage.length)} 只</div>
+      </div>
+      ${boardHtml}
+      ${listHtml}
+      <div class="muted" style="margin-top:8px">挤不进第一版说明不够优秀；不向后续版面扩散。</div>
+    </section>`;
 }
 
 export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, custom, indexSignals }) {
@@ -426,6 +469,11 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
   .ix-row.ix-buy .ix-tag { color: #7dffa8; }
   .ix-row.ix-watch .ix-tag { color: #ffd27a; }
   .ix-row.ix-avoid .ix-tag { color: #ff8e8e; }
+  .tao-boards { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 10px; }
+  .tao-list { display: flex; flex-direction: column; gap: 5px; }
+  .tao-row { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; font-size: 12px;
+    background: #121820; border: 1px solid var(--line); border-radius: 8px; padding: 6px 10px; }
+  .tao-row i { color: var(--accent); font-style: normal; font-weight: 700; }
   .etf-list { display: flex; flex-direction: column; gap: 10px; margin-top: 8px; }
   .etf-card {
     background: #121820; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
@@ -495,9 +543,10 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
         ? section(`自选股明细（${customCards.length}）`, '含乖离/MACD固定指标 · 雪球大V(粉丝≥4000)', customCards, '自选')
         : [
             indexSignalsHtml(ix),
+            taoPickHtml(shortTerm),
             section(
-              '模块一 · 正股（纯技术 + 陶博士每日观察/蓝色钻石）',
-              `候选 ${plain.length}/15 · 乖离/MACD + RPS选股公式`,
+              '模块一 · 正股（纯技术 + 顺向火车轨/火车每日观察/蓝色钻石）',
+              `候选 ${plain.length}/15 · 乖离/MACD + 陶博士RPS选股`,
               plain,
               '正股'
             ),

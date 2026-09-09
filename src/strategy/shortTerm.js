@@ -3,20 +3,31 @@
  * 同时并入正股的股权转让 / 要约收购 / 重组事件
  */
 
-import { fetchActiveStocks, fetchKlines } from '../crawl/eastmoney.js';
+import {
+  fetchActiveStocks,
+  fetchKlines,
+  fetchBoardRps5,
+  fetchMarketReturns,
+} from '../crawl/eastmoney.js';
 import { computeIndicators } from '../analyze/indicators.js';
 import { shortTermPrices, eventDrivenPrices } from '../analyze/pricing.js';
 import { inferProgress, listMajorEvents } from '../analyze/progress.js';
 import { buildSignalBoard } from '../analyze/modules.js';
 import {
   buildRpsMaps,
+  buildMarketRpsMaps,
   evalDailyObserve,
+  evalForwardTrain,
+  evalTaoPick241005,
   evalBlueDiamond,
   applyTaoBoost,
 } from '../analyze/tao.js';
 import { describeFundFlow, estimateChipConcentration } from '../analyze/marketMeta.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+/** 陶博士 241005：软件自选股一版约 29 只，只看第一版 */
+const FIRST_PAGE_SIZE = 29;
 
 function isChiNextOrStar(code) {
   return /^(30|68)/.test(code);
@@ -186,7 +197,17 @@ function enrichTechCard(s, tag = '买入') {
     fundFlow,
     chips,
     direction,
-    category: taoTags.includes('蓝色钻石') ? '蓝色钻石观察' : taoTags.includes('每日观察') ? '每日观察选股' : '技术共振',
+    category: taoTags.includes('率先年新高')
+      ? '率先年新高'
+      : taoTags.includes('深调高RPS回升')
+        ? '深调高RPS回升'
+        : taoTags.includes('顺向火车轨')
+          ? '顺向火车轨'
+          : taoTags.includes('蓝色钻石')
+            ? '蓝色钻石观察'
+            : taoTags.includes('每日观察')
+              ? '火车每日观察'
+              : '技术共振',
     action,
     buyPrice: prices.buyPrice,
     sellPrice: prices.sellPrice,
@@ -226,6 +247,11 @@ function enrichTechCard(s, tag = '买入') {
     taoTags: s.taoTags || [],
     dailyObserve: s.dailyObserve || null,
     blueDiamond: s.blueDiamond || null,
+    forwardTrain: s.forwardTrain || null,
+    pick241005: s.pick241005 || null,
+    board: s.board ? { name: s.board.name, rps5: s.board.rps5, change5: s.board.change5 } : null,
+    observeRank: s.observeRank ?? null,
+    inFirstPage: !!s.inFirstPage,
     rps: s.rps || null,
     mustPass: s.mustPass,
     veto: s.veto,
@@ -267,9 +293,11 @@ function enrichEventCard(row) {
 export async function runShortTermStrategy({
   maxCandidates = 15,
   scanPages = 8,
-  klineLimit = 260,
+  klineLimit = 300,
   detailLimit = 200,
   corporateEvents = [],
+  indexCanBuy = true,
+  fast = false,
   onProgress,
 } = {}) {
   onProgress?.('拉取活跃正股列表...');
@@ -296,7 +324,7 @@ export async function runShortTermStrategy({
   for (let i = 0; i < pool.length; i++) {
     const stock = pool[i];
     try {
-      const klines = await fetchKlines(stock.code, { limit: Math.max(klineLimit, 260) });
+      const klines = await fetchKlines(stock.code, { limit: Math.max(klineLimit, 300) });
       if (klines.length < 30) continue;
       const ind = computeIndicators(klines);
       if (!stock.turnover) stock.turnover = ind.lastTurnover;
@@ -309,8 +337,32 @@ export async function runShortTermStrategy({
     await sleep(120);
   }
 
-  onProgress?.('计算 RPS 排名并套用每日观察/蓝色钻石...');
-  const rpsMaps = buildRpsMaps(codeKlines);
+  onProgress?.('拉取板块指数 RPS5（主流板块优先）...');
+  let boardIndex = { boards: [], byName: new Map() };
+  try {
+    boardIndex = await fetchBoardRps5({ includeConcept: !fast });
+  } catch {
+    onProgress?.('板块 RPS5 拉取失败，跳过主流板块加分');
+  }
+
+  // RPS 必须是全市场分位（欧奈尔口径），只在扫描池内排名会让 95/96/98 阈值失真
+  onProgress?.('拉取全市场周期涨幅，计算欧奈尔 RPS...');
+  let rpsMaps = null;
+  try {
+    const marketRows = await fetchMarketReturns();
+    if (marketRows.length > 1000) {
+      rpsMaps = buildMarketRpsMaps(marketRows);
+      onProgress?.(`全市场 RPS 基准：${marketRows.length} 只`);
+    }
+  } catch {
+    /* 落回池内排名 */
+  }
+  if (!rpsMaps) {
+    onProgress?.('全市场基准不可用，回退为扫描池内 RPS 排名');
+    rpsMaps = buildRpsMaps(codeKlines);
+  }
+
+  onProgress?.('套用顺向火车轨/火车每日观察/241005择股...');
   for (const s of scored) {
     const code = s.stock.code;
     const rps = {
@@ -319,19 +371,42 @@ export async function runShortTermStrategy({
       rps120: rpsMaps.rps120[code] ?? 0,
       rps250: rpsMaps.rps250[code] ?? 0,
     };
+    const train = evalForwardTrain(s.klines, rps, s.stock.turnover);
     const daily = evalDailyObserve(s.klines, rps, s.stock.turnover);
     const diamond = evalBlueDiamond(s.klines, rps, s.stock.turnover);
-    const boosted = applyTaoBoost(s, daily, diamond);
+    const pick241005 = evalTaoPick241005(s.klines, rps, s.stock.turnover, { indexCanBuy });
+    const board = boardIndex.byName.get(s.stock.industry) || null;
+    const boosted = applyTaoBoost(s, { daily, diamond, train, pick241005, board });
     Object.assign(s, boosted, { rps });
   }
+
+  // 241005 用法：每日观察选股结果只看「当天涨幅榜第一版」，挤不进第一版的说明不够优秀
+  const observeHits = scored
+    .filter((x) => x.pick241005?.hit && !x.veto?.length)
+    .sort((a, b) => (b.stock.changePct ?? 0) - (a.stock.changePct ?? 0));
+  const firstPage = observeHits.slice(0, FIRST_PAGE_SIZE);
+  firstPage.forEach((s, idx) => {
+    s.observeRank = idx + 1;
+    s.inFirstPage = true;
+    s.score += idx < 10 ? 6 : 3;
+    s.reasons = [...(s.reasons || []), `当日涨幅榜第一版第${idx + 1}名（${(s.stock.changePct ?? 0).toFixed(2)}%）`];
+  });
+  onProgress?.(
+    `241005每日观察命中 ${observeHits.length} 只，按当日涨幅取第一版 ${firstPage.length} 只`
+  );
 
   const ops = buildShortTermOps(scored);
   let techList = ops.buy.slice(0, maxCandidates);
 
-  // 陶博士命中优先补入候选
+  // 陶博士命中优先补入候选：当日涨幅榜第一版优先，避免向全市场扩散
   const taoHits = scored
     .filter((x) => (x.taoTags || []).length && !x.veto?.length)
-    .sort((a, b) => b.score - a.score);
+    .sort(
+      (a, b) =>
+        (b.inFirstPage ? 1 : 0) - (a.inFirstPage ? 1 : 0) ||
+        (a.observeRank ?? 999) - (b.observeRank ?? 999) ||
+        b.score - a.score
+    );
   for (const t of taoHits) {
     if (techList.length >= maxCandidates) break;
     if (techList.some((x) => x.stock.code === t.stock.code)) continue;
@@ -365,6 +440,10 @@ export async function runShortTermStrategy({
     candidates,
     sellCards,
     eventCards: [],
+    // 241005：当天交易日的每日观察涨幅榜第一版（不向后续版面扩散）
+    observeFirstPage: firstPage.map((s) => enrichTechCard(s, '买入')),
+    observeHitCount: observeHits.length,
+    hotBoards: boardIndex.boards.filter((b) => b.rps5 >= 90).slice(0, 12),
     taoHits: taoHits.slice(0, 20).map((s) => enrichTechCard(s, '买入')),
     ops: {
       buy: ops.buy.slice(0, maxCandidates),

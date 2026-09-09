@@ -42,13 +42,23 @@ async function fetchJson(url, { retries = 3, delay = 400, referer } = {}) {
   throw lastErr;
 }
 
+// 某个节点不通时（如被代理拦截），逐页重试代价极高，故记住上次成功的节点优先用
+let preferredClistHost = null;
+
 async function fetchClist(query) {
+  const hosts = preferredClistHost
+    ? [preferredClistHost, ...CLIST_HOSTS.filter((h) => h !== preferredClistHost)]
+    : CLIST_HOSTS;
+
   let lastErr;
-  for (const host of CLIST_HOSTS) {
+  for (const host of hosts) {
     try {
-      return await fetchJson(`${host}/api/qt/clist/get?${query}`, { retries: 2 });
+      const data = await fetchJson(`${host}/api/qt/clist/get?${query}`, { retries: 2 });
+      preferredClistHost = host;
+      return data;
     } catch (err) {
       lastErr = err;
+      if (preferredClistHost === host) preferredClistHost = null;
     }
   }
   throw lastErr;
@@ -178,6 +188,216 @@ export async function fetchStStocks({ pages = 8, pageSize = 100 } = {}) {
   const map = new Map();
   for (const s of all) map.set(s.code, s);
   return [...map.values()];
+}
+
+/**
+ * 全市场周期涨幅（用于按欧奈尔口径做全市场 RPS 排名）
+ * f109=5日 / f24=60日 / f25=年初至今，均为交易所口径，无需逐只拉K线
+ */
+export async function fetchMarketReturns({ maxPages = 70 } = {}) {
+  const fields = 'f12,f14,f3,f109,f24,f25';
+  const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
+  const rows = [];
+
+  for (let pn = 1; pn <= maxPages; pn++) {
+    let list = [];
+    try {
+      const query =
+        `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f12` +
+        `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
+      const data = await fetchClist(query);
+      list = data?.data?.diff || [];
+    } catch {
+      break;
+    }
+    if (!list.length) break;
+    for (const item of list) {
+      const code = String(item.f12 || '');
+      const name = String(item.f14 || '');
+      if (!code || !name || /ST/i.test(name)) continue;
+      rows.push({
+        code,
+        name,
+        change5: num(item.f109),
+        change60: num(item.f24),
+        changeYtd: num(item.f25),
+      });
+    }
+    if (list.length < 100) break;
+  }
+  return rows;
+}
+
+/** 情绪/属性类伪板块，不能代表主流方向，排除出 RPS5 排名 */
+const NOISE_BOARD =
+  /连板|涨停|跌停|昨日|次新|st板块|风险警示|退市|融资融券|标准普尔|富时|msci|沪股通|深股通|中字头|破净|预盈|预亏|高送转|参股|机构重仓|基金重仓|QFII|社保|举牌|大盘|中盘|小盘|微盘/i;
+
+/**
+ * 板块指数 RPS5（陶博士 241005「先看主流板块」）
+ * f109 = 5日涨跌幅，用全板块横向百分位排名近似板块 RPS5
+ */
+export async function fetchBoardRps5({ includeConcept = true } = {}) {
+  const fields = 'f12,f14,f3,f109';
+  const groups = [{ fs: 'm:90+t:2', kind: '行业' }];
+  if (includeConcept) groups.push({ fs: 'm:90+t:3', kind: '概念' });
+
+  const boards = [];
+  for (const { fs, kind } of groups) {
+    for (let pn = 1; pn <= 6; pn++) {
+      let list = [];
+      try {
+        const query =
+          `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3` +
+          `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
+        const data = await fetchClist(query);
+        list = data?.data?.diff || [];
+      } catch {
+        break; // 单组失败不影响整体
+      }
+      if (!list.length) break;
+      for (const item of list) {
+        const name = String(item.f14 || '').trim();
+        if (!name || NOISE_BOARD.test(name)) continue;
+        boards.push({
+          code: String(item.f12 || ''),
+          name,
+          kind,
+          changePct: num(item.f3),
+          change5: num(item.f109),
+        });
+      }
+      if (list.length < 100) break;
+      await sleep(180);
+    }
+  }
+
+  // 行业与概念分开排名，避免概念板块数量压制行业分位
+  const byName = new Map();
+  for (const kind of ['行业', '概念']) {
+    const group = boards.filter((b) => b.kind === kind && Number.isFinite(b.change5));
+    group.sort((a, b) => a.change5 - b.change5);
+    const n = group.length;
+    group.forEach((b, i) => {
+      b.rps5 = n <= 1 ? 100 : +((i / (n - 1)) * 100).toFixed(2);
+      if (!byName.has(b.name)) byName.set(b.name, b);
+    });
+  }
+
+  const ranked = [...byName.values()].sort((a, b) => (b.rps5 ?? 0) - (a.rps5 ?? 0));
+  return { boards: ranked, byName };
+}
+
+/**
+ * 尾盘板块快照：
+ * - strongestToday：今日涨幅、上涨家数占比与资金流共同确认的最强行业
+ * - tailMovers：今日强度明显高于近5日平均、且有扩散度/资金确认的异动行业
+ *
+ * 东财字段：f3今日涨幅、f109近5日涨幅、f62主力净流入、
+ * f104/f105上涨/下跌家数、f128/f140/f136领涨股名称/代码/涨幅。
+ */
+export async function fetchTailBoardSignals({ limit = 10 } = {}) {
+  const fields = 'f12,f14,f3,f109,f62,f184,f104,f105,f128,f136,f140';
+  const boards = [];
+
+  for (let pn = 1; pn <= 6; pn++) {
+    let list = [];
+    try {
+      const query =
+        `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3` +
+        `&fs=${encodeURIComponent('m:90+t:2')}&fields=${fields}`;
+      const data = await fetchClist(query);
+      list = data?.data?.diff || [];
+    } catch {
+      break;
+    }
+    if (!list.length) break;
+    for (const item of list) {
+      const name = String(item.f14 || '').trim();
+      if (!name || NOISE_BOARD.test(name)) continue;
+      const up = num(item.f104);
+      const down = num(item.f105);
+      const breadth = up + down > 0 ? up / (up + down) : 0;
+      const changePct = num(item.f3);
+      const change5 = num(item.f109);
+      const acceleration = changePct - change5 / 5;
+      const mainNetInflow = num(item.f62);
+      const mainNetInflowPct = num(item.f184);
+      boards.push({
+        code: String(item.f12 || ''),
+        name,
+        changePct,
+        change5,
+        acceleration: +acceleration.toFixed(2),
+        up,
+        down,
+        breadth: +breadth.toFixed(3),
+        mainNetInflow,
+        mainNetInflowPct,
+        leader: String(item.f128 || '').trim(),
+        leaderCode: String(item.f140 || ''),
+        leaderChangePct: num(item.f136),
+      });
+    }
+    if (list.length < 100) break;
+  }
+
+  const sortedByChange = [...boards].sort(
+    (a, b) =>
+      b.changePct - a.changePct ||
+      b.breadth - a.breadth ||
+      b.mainNetInflow - a.mainNetInflow
+  );
+  const n = sortedByChange.length;
+  sortedByChange.forEach((b, i) => {
+    b.todayRank = i + 1;
+    b.todayRps = n <= 1 ? 100 : +(((n - 1 - i) / (n - 1)) * 100).toFixed(2);
+  });
+
+  // 东财行业分级可能出现成分完全相同的 II/III 级板块，避免重复提醒。
+  const dedupeSimilar = (list) => {
+    const seen = new Set();
+    return list.filter((b) => {
+      const key = `${b.leaderCode}|${b.up}|${b.down}|${b.changePct.toFixed(1)}`;
+      if (seen.has(key)) return false;
+      seen.add(key);
+      return true;
+    });
+  };
+
+  // “最强”要求板块不是只靠一两只票硬拉：至少半数上涨，且资金不为明显流出。
+  const strongestToday = dedupeSimilar(
+    sortedByChange.filter(
+      (b) => b.changePct > 0 && b.breadth >= 0.5 && b.mainNetInflow >= 0
+    )
+  ).slice(0, limit);
+
+  // “异动”强调相对近5日均速突然加速，并要求上涨扩散和资金确认。
+  const tailMovers = dedupeSimilar(
+    boards
+    .filter(
+      (b) =>
+        b.changePct >= 1.5 &&
+        b.acceleration >= 1.2 &&
+        b.breadth >= 0.6 &&
+        b.mainNetInflow > 0
+    )
+    .map((b) => ({
+      ...b,
+      moveScore:
+        b.changePct * 4 +
+        b.acceleration * 3 +
+        b.breadth * 15 +
+        Math.min(10, Math.max(0, b.mainNetInflowPct)),
+    }))
+    .sort((a, b) => b.moveScore - a.moveScore)
+  ).slice(0, limit);
+
+  return {
+    boards,
+    byName: new Map(boards.map((b) => [b.name, b])),
+    strongestToday,
+    tailMovers,
+  };
 }
 
 async function fetchKlinesEm(code, limit, market) {

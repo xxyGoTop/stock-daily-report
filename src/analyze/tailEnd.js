@@ -8,7 +8,12 @@
  */
 
 import dayjs from 'dayjs';
-import { fetchActiveStocks, fetchKlines, getDataFreshness } from '../crawl/eastmoney.js';
+import {
+  fetchActiveStocks,
+  fetchKlines,
+  fetchTailBoardSignals,
+  getDataFreshness,
+} from '../crawl/eastmoney.js';
 import { computeIndicators } from './indicators.js';
 import { buildSignalBoard } from './modules.js';
 import { describeFundFlow, estimateChipConcentration } from './marketMeta.js';
@@ -223,7 +228,7 @@ export function positionAdvice(market, score) {
  * 尾盘叙述：买入理由只放支持买入的因子，利空单列风险提示
  */
 function buildTailNarrative(ctx) {
-  const { stock, ind, vol, dayPos, market } = ctx;
+  const { stock, ind, vol, dayPos, market, boardSignal } = ctx;
   const pros = [];
   const risks = [];
   const addPro = (w, text) => {
@@ -324,6 +329,20 @@ function buildTailNarrative(ctx) {
     risks.push('大盘多数指数未站稳10周线，属逆势买入');
   }
 
+  if (boardSignal?.isMover) {
+    addPro(
+      88,
+      `所属${boardSignal.name}尾盘异动，今日${boardSignal.changePct.toFixed(2)}%、上涨扩散${(
+        boardSignal.breadth * 100
+      ).toFixed(0)}%、主力净流入${(boardSignal.mainNetInflow / 1e8).toFixed(2)}亿`
+    );
+  } else if (boardSignal?.isStrong) {
+    addPro(
+      76,
+      `所属${boardSignal.name}为今日最强板块第${boardSignal.todayRank}名，板块涨${boardSignal.changePct.toFixed(2)}%`
+    );
+  }
+
   pros.sort((a, b) => b.w - a.w);
   return {
     buyReasons: pros.slice(0, 5).map((d) => d.text),
@@ -333,7 +352,7 @@ function buildTailNarrative(ctx) {
 
 /** 尾盘评分 */
 function scoreTail(ctx) {
-  const { stock, ind, vol, dayPos, market } = ctx;
+  const { stock, ind, vol, dayPos, market, boardSignal } = ctx;
   let score = 0;
   const veto = [];
 
@@ -379,6 +398,10 @@ function scoreTail(ctx) {
   if (market?.marketSignal === 'buy') score += 5;
   else if (market?.marketSignal === 'avoid') score -= 12;
 
+  // 板块只做加分，不绕过个股五日线/量能/尾盘位置硬门槛
+  if (boardSignal?.isMover) score += 10;
+  else if (boardSignal?.isStrong) score += 7;
+
   // 否决项
   const chg = num(stock.changePct) ?? 0;
   const lim = limitPct(stock.code);
@@ -416,6 +439,28 @@ export async function screenTailEnd({
 
   const freshness = assessDataFreshness({ ...(await getDataFreshness()), now });
   onProgress?.(freshness.text);
+
+  onProgress?.('扫描今日最强板块与尾盘异动板块...');
+  let boardSignals = {
+    boards: [],
+    byName: new Map(),
+    strongestToday: [],
+    tailMovers: [],
+  };
+  try {
+    boardSignals = await fetchTailBoardSignals({ limit: 10 });
+    const strongSet = new Set(boardSignals.strongestToday.map((b) => b.name));
+    const moverSet = new Set(boardSignals.tailMovers.map((b) => b.name));
+    for (const board of boardSignals.boards) {
+      board.isStrong = strongSet.has(board.name);
+      board.isMover = moverSet.has(board.name);
+    }
+    onProgress?.(
+      `板块：今日最强 ${boardSignals.strongestToday.length} 个，尾盘异动 ${boardSignals.tailMovers.length} 个`
+    );
+  } catch {
+    onProgress?.('板块快照不可用，本次仅按个股信号筛选');
+  }
 
   onProgress?.('拉取全市场快照...');
   const stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
@@ -459,7 +504,8 @@ export async function screenTailEnd({
       if (!stock.turnover) stock.turnover = ind.lastTurnover;
 
       const vol = analyzeTodayVolume(stock, klines, phase, now);
-      const ctx = { stock, ind, vol, dayPos, market };
+      const boardSignal = boardSignals.byName.get(stock.industry) || null;
+      const ctx = { stock, ind, vol, dayPos, market, boardSignal };
       const { score, veto } = scoreTail(ctx);
 
       // 五日线硬门槛：尾盘只买站上向上五日线的
@@ -493,6 +539,19 @@ export async function screenTailEnd({
       turnover: r.stock.turnover,
       amount: r.stock.amount,
       industry: r.stock.industry || '未知行业',
+      boardSignal: r.ctx.boardSignal
+        ? {
+            name: r.ctx.boardSignal.name,
+            changePct: r.ctx.boardSignal.changePct,
+            change5: r.ctx.boardSignal.change5,
+            acceleration: r.ctx.boardSignal.acceleration,
+            breadth: r.ctx.boardSignal.breadth,
+            mainNetInflow: r.ctx.boardSignal.mainNetInflow,
+            todayRank: r.ctx.boardSignal.todayRank,
+            isStrong: !!r.ctx.boardSignal.isStrong,
+            isMover: !!r.ctx.boardSignal.isMover,
+          }
+        : null,
       mainNetInflow: r.stock.mainNetInflow || 0,
       mainNetInflowPct: r.stock.mainNetInflowPct || 0,
       fundFlow: describeFundFlow({
@@ -528,6 +587,27 @@ export async function screenTailEnd({
     .filter((c) => c.entryMode === '不买')
     .slice(0, Math.max(5, Math.ceil(maxCandidates / 2)));
 
+  // 板块推荐只从已经通过个股硬门槛的尾盘候选/观察池中产生，不扩散推荐板块内其他股票。
+  const boardRecommendations = allCards
+    .filter((c) => c.boardSignal?.isMover || c.boardSignal?.isStrong)
+    .sort(
+      (a, b) =>
+        (b.boardSignal?.isMover ? 1 : 0) - (a.boardSignal?.isMover ? 1 : 0) ||
+        b.score - a.score
+    )
+    .slice(0, maxCandidates)
+    .map((c) => ({
+      code: c.code,
+      name: c.name,
+      industry: c.industry,
+      score: c.score,
+      action: c.entryMode === '不买' ? '观察等回踩' : '尾盘优先',
+      buyPrice: c.buyPrice,
+      boardType: c.boardSignal.isMover ? '尾盘异动' : '今日最强',
+      boardChangePct: c.boardSignal.changePct,
+      boardRank: c.boardSignal.todayRank,
+    }));
+
   // 落选原因统计，方便判断是「市场没机会」还是「筛太严」
   const rejectStats = {};
   for (const r of rows) {
@@ -546,6 +626,9 @@ export async function screenTailEnd({
     passedCount: passed.length,
     candidates,
     watchList,
+    strongestBoards: boardSignals.strongestToday,
+    tailMovingBoards: boardSignals.tailMovers,
+    boardRecommendations,
     rejectStats,
     generatedAt: now.format('YYYY-MM-DD HH:mm:ss'),
   };

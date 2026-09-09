@@ -48,11 +48,23 @@ function printCard(p, c, i) {
     p(`      雪球大V：${c.xueqiu.reason}`);
   }
   if (c.taoTags?.length) {
-    p(`      陶博士：${c.taoTags.join('、')}${c.rps ? ` · RPS50=${c.rps.rps50} RPS120=${c.rps.rps120}` : ''}`);
+    p(
+      `      陶博士：${c.taoTags.join('、')}${
+        c.rps
+          ? ` · RPS50=${c.rps.rps50} RPS120=${c.rps.rps120} RPS250=${c.rps.rps250}`
+          : ''
+      }`
+    );
+  }
+  if (c.board?.rps5 != null) {
+    p(`      板块：${c.board.name} RPS5=${c.board.rps5.toFixed(0)}（5日${c.board.change5}%）`);
+  }
+  if (c.observeRank) {
+    p(`      每日观察：当日涨幅榜第一版第 ${c.observeRank} 名`);
   }
 }
 
-export function printReport({ modules, meta, turnaround, indexSignals, brief }) {
+export function printReport({ modules, meta, turnaround, indexSignals, brief, shortTerm }) {
   const now = meta.generatedAt;
   const out = [];
   const p = (s = '') => out.push(s);
@@ -110,8 +122,32 @@ export function printReport({ modules, meta, turnaround, indexSignals, brief }) 
     p('');
   }
 
+  const hotBoards = shortTerm?.hotBoards || [];
+  if (hotBoards.length) {
+    p(line('═'));
+    p('【主流板块】板块指数 RPS5 前列（先选板块，再选个股）');
+    p(line('═'));
+    p(hotBoards.map((b) => `${b.name}(${b.rps5.toFixed(0)})`).join(' · '));
+    p('');
+  }
+
+  const observeFirstPage = shortTerm?.observeFirstPage || [];
+  if (observeFirstPage.length) {
+    p(line('═'));
+    p('【每日观察·当日涨幅榜第一版】率先年新高 / 深调高RPS回升');
+    p(line('═'));
+    p(`当日命中 ${shortTerm.observeHitCount} 只，只看第一版 ${observeFirstPage.length} 只（挤不进第一版的不够优秀）`);
+    observeFirstPage.forEach((c, i) => {
+      p(
+        `  ${String(i + 1).padStart(2)}. ${c.code} ${c.name}  ${fmtPct(c.changePct)}  ` +
+          `${(c.taoTags || []).join('/') || '-'}${c.board?.name ? ` ｜${c.board.name}` : ''}`
+      );
+    });
+    p('');
+  }
+
   p(line('═'));
-  p('【模块一】正股（纯技术 + 每日观察/蓝色钻石）');
+  p('【模块一】正股（纯技术 + 顺向火车轨/火车每日观察/蓝色钻石）');
   p(line('═'));
   p(`候选：${plain.length}`);
   plain.slice(0, 15).forEach((c, i) => printCard(p, c, i));
@@ -133,6 +169,7 @@ export function printReport({ modules, meta, turnaround, indexSignals, brief }) 
   p('');
   p(line('═'));
   p('仓位提示：短线单票建议≤20%~30%；ST/事件驱动高风险，建议更低仓位。');
+  p('顺向火车轨偏中线：偏好形成初期、右侧年高、10日线下买点；跌破20日线无勾头建议止损。');
   p('蓝色钻石为观察池信号，建议等右侧口袋支点再买，勿见信号就追。');
   p('完整可视化请打开当日目录 latest.html');
   p('');

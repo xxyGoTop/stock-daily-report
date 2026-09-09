@@ -84,6 +84,62 @@ function render(result) {
   }
   p('');
 
+  const strongestBoards = result.strongestBoards || [];
+  p(line('═'));
+  p(`【今天最强板块】${strongestBoards.length} 个 · 今日涨幅+上涨扩散+资金流确认`);
+  p(line('═'));
+  if (!strongestBoards.length) {
+    p('  暂无同时满足涨幅、扩散度和资金流确认的强势板块。');
+  } else {
+    strongestBoards.forEach((b, i) => {
+      p(
+        `${String(i + 1).padStart(2, '0')}. ${b.name} ${fmtPct(b.changePct)}  ` +
+          `上涨${b.up}/下跌${b.down}  主力${b.mainNetInflow >= 0 ? '+' : ''}${(
+            b.mainNetInflow / 1e8
+          ).toFixed(2)}亿`
+      );
+      if (b.leader) {
+        p(`    领涨：${b.leader}${b.leaderCode ? `(${b.leaderCode})` : ''} ${fmtPct(b.leaderChangePct)}`);
+      }
+    });
+  }
+  p('');
+
+  const tailMovingBoards = result.tailMovingBoards || [];
+  p(line('═'));
+  p(`【尾盘异动板块提醒】${tailMovingBoards.length} 个 · 今日突然加速且有资金/扩散确认`);
+  p(line('═'));
+  if (!tailMovingBoards.length) {
+    p('  暂无可信的板块异动，不因单只涨停股强行定义板块行情。');
+  } else {
+    tailMovingBoards.forEach((b, i) => {
+      p(
+        `${String(i + 1).padStart(2, '0')}. ${b.name} ${fmtPct(b.changePct)}  ` +
+          `较5日均速加速 ${fmtPct(b.acceleration)}  上涨扩散${(b.breadth * 100).toFixed(0)}%  ` +
+          `主力${b.mainNetInflow >= 0 ? '+' : ''}${(b.mainNetInflow / 1e8).toFixed(2)}亿`
+      );
+      if (b.leader) {
+        p(`    领涨：${b.leader}${b.leaderCode ? `(${b.leaderCode})` : ''} ${fmtPct(b.leaderChangePct)}`);
+      }
+    });
+  }
+  p('');
+
+  const boardRecommendations = result.boardRecommendations || [];
+  if (boardRecommendations.length) {
+    p(line('═'));
+    p(`【板块共振推荐】${boardRecommendations.length} 只 · 仅列通过个股硬门槛的股票`);
+    p(line('═'));
+    boardRecommendations.forEach((c, i) => {
+      p(
+        `${String(i + 1).padStart(2, '0')}. ${c.code} ${c.name}  ${c.industry} ` +
+          `[${c.boardType}·板块${fmtPct(c.boardChangePct)}]  得分${c.score}`
+      );
+      p(`    ▸ ${c.action}：${c.buyPrice}`);
+    });
+    p('');
+  }
+
   p(line('═'));
   p(`【尾盘可买】${candidates.length} 只`);
   p(line('═'));
@@ -112,6 +168,18 @@ function render(result) {
     p(`    ─ 五日线：${c.ma5Text}`);
     p(`    ─ ${c.volumeText}`);
     p(`    ─ ${c.dayPosText}`);
+    if (c.boardSignal?.isMover) {
+      p(
+        `    ─ 板块：尾盘异动·${c.boardSignal.name} ${fmtPct(c.boardSignal.changePct)} ` +
+          `（扩散${(c.boardSignal.breadth * 100).toFixed(0)}%）`
+      );
+    } else if (c.boardSignal?.isStrong) {
+      p(
+        `    ─ 板块：今日最强第${c.boardSignal.todayRank}·${c.boardSignal.name} ${fmtPct(
+          c.boardSignal.changePct
+        )}`
+      );
+    }
     p(`    ─ 资金：${c.fundFlow?.text || '-'}`);
     p(`    ─ ${c.signalBoard?.macdText || '-'}`);
     p('    ▸ 买入理由：');
@@ -133,6 +201,12 @@ function render(result) {
     watch.forEach((c, i) => {
       p(`${String(i + 1).padStart(2, '0')}. ${c.code} ${c.name}  ${c.industry}  [得分 ${c.score}]`);
       p(`    现价 ${fmtPrice(c.price)} ${fmtPct(c.changePct)}  MA5 ${fmtPrice(c.ma5)}  乖离 ${fmtPct(c.bias5)}`);
+      if (c.boardSignal?.isMover || c.boardSignal?.isStrong) {
+        p(
+          `    ▸ 板块：${c.boardSignal.isMover ? '尾盘异动' : `今日最强第${c.boardSignal.todayRank}`}·` +
+            `${c.boardSignal.name} ${fmtPct(c.boardSignal.changePct)}`
+        );
+      }
       p(`    ▸ 为何不买：${c.buyReason}`);
       p(`    ▸ 若回踩到位：可在 ${fmtPrice(c.ma5)} 附近再评估，止损参考 ${fmtPrice(c.stop)}`);
       p('');
