@@ -43,6 +43,7 @@ npm start
 | `npm run stock -- 贵州茅台 600519` | 只分析指定几只（**支持中文名**） |
 | `npm run note -- 远东股份 英力特` | 生成明日交易便签（现价/买/卖/注意项） |
 | `npm run tail` | **尾盘选股**：今天尾盘能买哪些、买入点、买入理由 |
+| `npm run boards` | **板块强度**：当日前十强度板块、是否分化/资金/走强（HTML） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -75,6 +76,27 @@ npm run tail -- --no-market # 跳过大盘分析，更快
 ```
 
 和其他命令的关键区别：**买入点是当场可挂的价位**，不是明日回踩价；量能会按已过交易时间折算成全天量，所以盘中提前跑也不会低估当日量。
+
+### 板块强度 `npm run boards`
+
+只统计**当天交易日**行业板块强度（不跑选股），自动打开 HTML：
+
+```bash
+npm run boards              # 前 10 强度板块
+npm run 板块                # 同上
+npm run boards -- --top=15  # 前 15
+npm run boards -- --concept # 行业+概念一起排
+npm run boards -- --no-open # 不自动打开浏览器
+```
+
+每张板块卡片给出：
+
+- **综合强度**（涨幅 + 上涨扩散 + 主力资金 + 相对近 5 日加速）
+- **是否分化**：齐涨 / 一般 / 分化（少数票硬拉）
+- **资金情况**：主力净流入/流出及金额
+- **是否走强**：走强 / 冲高分化 / 震荡 / 走弱
+
+结果在 `output/<日期>/latest-boards.html`（快捷入口 `output/latest-boards.html`）。
 
 三档筛选条件：
 
@@ -153,8 +175,9 @@ output/
 src/
   index.js              入口：参数解析、三模块编排、报告生成
   tail.js               入口：尾盘选股命令
+  boards.js             入口：当日板块强度统计（HTML）
   crawl/
-    eastmoney.js        行情 / K线 / 股票列表
+    eastmoney.js        行情 / K线 / 股票列表 / 板块快照
     cninfo.js           巨潮公告关键词检索
     hotNews.js          今日热点新闻
     xueqiu.js           雪球大V（Playwright 手动登录）
@@ -172,8 +195,11 @@ src/
     indexSignals.js     指数与 ETF 买卖信号
     session.js          交易时段判定 + 行情新鲜度交叉验证
     tailEnd.js          尾盘筛选：时段折算量能 + 日内位置 + 尾盘定价
+    boardStrength.js    当日板块强度 / 分化 / 资金 / 走强
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
+  output/
+    boardHtml.js        板块强度 HTML
   journal/              交易台账（本地网页 + 统计）
 ```
 

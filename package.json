@@ -14,7 +14,9 @@
     "note": "node src/note.js",
     "便签": "node src/note.js",
     "tail": "node src/tail.js",
-    "尾盘": "node src/tail.js"
+    "尾盘": "node src/tail.js",
+    "boards": "node src/boards.js",
+    "板块": "node src/boards.js"
   },
   "engines": {
     "node": ">=18"

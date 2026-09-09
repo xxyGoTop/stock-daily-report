@@ -295,63 +295,73 @@ export async function fetchBoardRps5({ includeConcept = true } = {}) {
  * 东财字段：f3今日涨幅、f109近5日涨幅、f62主力净流入、
  * f104/f105上涨/下跌家数、f128/f140/f136领涨股名称/代码/涨幅。
  */
-export async function fetchTailBoardSignals({ limit = 10 } = {}) {
+export async function fetchTailBoardSignals({ limit = 10, includeConcept = false } = {}) {
   const fields = 'f12,f14,f3,f109,f62,f184,f104,f105,f128,f136,f140';
   const boards = [];
+  const groups = [{ fs: 'm:90+t:2', kind: '行业' }];
+  if (includeConcept) groups.push({ fs: 'm:90+t:3', kind: '概念' });
 
-  for (let pn = 1; pn <= 6; pn++) {
-    let list = [];
-    try {
-      const query =
-        `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3` +
-        `&fs=${encodeURIComponent('m:90+t:2')}&fields=${fields}`;
-      const data = await fetchClist(query);
-      list = data?.data?.diff || [];
-    } catch {
-      break;
+  for (const { fs, kind } of groups) {
+    for (let pn = 1; pn <= 6; pn++) {
+      let list = [];
+      try {
+        const query =
+          `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3` +
+          `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
+        const data = await fetchClist(query);
+        list = data?.data?.diff || [];
+      } catch {
+        break;
+      }
+      if (!list.length) break;
+      for (const item of list) {
+        const name = String(item.f14 || '').trim();
+        if (!name || NOISE_BOARD.test(name)) continue;
+        const up = num(item.f104);
+        const down = num(item.f105);
+        const breadth = up + down > 0 ? up / (up + down) : 0;
+        const changePct = num(item.f3);
+        const change5 = num(item.f109);
+        const acceleration = changePct - change5 / 5;
+        const mainNetInflow = num(item.f62);
+        const mainNetInflowPct = num(item.f184);
+        boards.push({
+          code: String(item.f12 || ''),
+          name,
+          kind,
+          changePct,
+          change5,
+          acceleration: +acceleration.toFixed(2),
+          up,
+          down,
+          breadth: +breadth.toFixed(3),
+          mainNetInflow,
+          mainNetInflowPct,
+          leader: String(item.f128 || '').trim(),
+          leaderCode: String(item.f140 || ''),
+          leaderChangePct: num(item.f136),
+        });
+      }
+      if (list.length < 100) break;
+      await sleep(120);
     }
-    if (!list.length) break;
-    for (const item of list) {
-      const name = String(item.f14 || '').trim();
-      if (!name || NOISE_BOARD.test(name)) continue;
-      const up = num(item.f104);
-      const down = num(item.f105);
-      const breadth = up + down > 0 ? up / (up + down) : 0;
-      const changePct = num(item.f3);
-      const change5 = num(item.f109);
-      const acceleration = changePct - change5 / 5;
-      const mainNetInflow = num(item.f62);
-      const mainNetInflowPct = num(item.f184);
-      boards.push({
-        code: String(item.f12 || ''),
-        name,
-        changePct,
-        change5,
-        acceleration: +acceleration.toFixed(2),
-        up,
-        down,
-        breadth: +breadth.toFixed(3),
-        mainNetInflow,
-        mainNetInflowPct,
-        leader: String(item.f128 || '').trim(),
-        leaderCode: String(item.f140 || ''),
-        leaderChangePct: num(item.f136),
-      });
-    }
-    if (list.length < 100) break;
   }
 
-  const sortedByChange = [...boards].sort(
-    (a, b) =>
-      b.changePct - a.changePct ||
-      b.breadth - a.breadth ||
-      b.mainNetInflow - a.mainNetInflow
-  );
-  const n = sortedByChange.length;
-  sortedByChange.forEach((b, i) => {
-    b.todayRank = i + 1;
-    b.todayRps = n <= 1 ? 100 : +(((n - 1 - i) / (n - 1)) * 100).toFixed(2);
-  });
+  // 行业 / 概念分开算今日相对强度，避免概念数量压制行业分位
+  for (const kind of ['行业', '概念']) {
+    const group = boards.filter((b) => b.kind === kind);
+    const sortedByChange = [...group].sort(
+      (a, b) =>
+        b.changePct - a.changePct ||
+        b.breadth - a.breadth ||
+        b.mainNetInflow - a.mainNetInflow
+    );
+    const n = sortedByChange.length;
+    sortedByChange.forEach((b, i) => {
+      b.todayRank = i + 1;
+      b.todayRps = n <= 1 ? 100 : +(((n - 1 - i) / (n - 1)) * 100).toFixed(2);
+    });
+  }
 
   // 东财行业分级可能出现成分完全相同的 II/III 级板块，避免重复提醒。
   const dedupeSimilar = (list) => {
@@ -364,32 +374,37 @@ export async function fetchTailBoardSignals({ limit = 10 } = {}) {
     });
   };
 
+  const industryOnly = boards.filter((b) => b.kind === '行业');
+  const sortedIndustry = [...industryOnly].sort(
+    (a, b) => b.changePct - a.changePct || b.breadth - a.breadth || b.mainNetInflow - a.mainNetInflow
+  );
+
   // “最强”要求板块不是只靠一两只票硬拉：至少半数上涨，且资金不为明显流出。
   const strongestToday = dedupeSimilar(
-    sortedByChange.filter(
+    sortedIndustry.filter(
       (b) => b.changePct > 0 && b.breadth >= 0.5 && b.mainNetInflow >= 0
     )
   ).slice(0, limit);
 
   // “异动”强调相对近5日均速突然加速，并要求上涨扩散和资金确认。
   const tailMovers = dedupeSimilar(
-    boards
-    .filter(
-      (b) =>
-        b.changePct >= 1.5 &&
-        b.acceleration >= 1.2 &&
-        b.breadth >= 0.6 &&
-        b.mainNetInflow > 0
-    )
-    .map((b) => ({
-      ...b,
-      moveScore:
-        b.changePct * 4 +
-        b.acceleration * 3 +
-        b.breadth * 15 +
-        Math.min(10, Math.max(0, b.mainNetInflowPct)),
-    }))
-    .sort((a, b) => b.moveScore - a.moveScore)
+    industryOnly
+      .filter(
+        (b) =>
+          b.changePct >= 1.5 &&
+          b.acceleration >= 1.2 &&
+          b.breadth >= 0.6 &&
+          b.mainNetInflow > 0
+      )
+      .map((b) => ({
+        ...b,
+        moveScore:
+          b.changePct * 4 +
+          b.acceleration * 3 +
+          b.breadth * 15 +
+          Math.min(10, Math.max(0, b.mainNetInflowPct)),
+      }))
+      .sort((a, b) => b.moveScore - a.moveScore)
   ).slice(0, limit);
 
   return {
