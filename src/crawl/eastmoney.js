@@ -228,6 +228,53 @@ export async function fetchMarketReturns({ maxPages = 70 } = {}) {
   return rows;
 }
 
+/**
+ * 指数实时快照（批量一次请求）
+ * f2最新价 f3涨跌幅 f5成交量(手) f6成交额(元)
+ *
+ * @param {{code:string,name?:string,market:'sh'|'sz',tags?:string[]}[]} items
+ */
+export async function fetchIndexRealtime(items = []) {
+  if (!items.length) return [];
+  const secids = items.map((it) => toSecId(it.code, it.market)).join(',');
+  const query =
+    `fltt=2&invt=2&fields=${encodeURIComponent('f2,f3,f5,f6,f12,f14')}` +
+    `&secids=${encodeURIComponent(secids)}`;
+
+  let list = [];
+  for (const host of CLIST_HOSTS) {
+    try {
+      const data = await fetchJson(`${host}/api/qt/ulist.np/get?${query}`, { retries: 2 });
+      list = data?.data?.diff || [];
+      if (list.length) break;
+    } catch {
+      /* next host */
+    }
+  }
+  if (!list.length) return [];
+
+  const byCode = new Map(
+    list.map((x) => [
+      String(x.f12 || '').padStart(6, '0'),
+      {
+        price: num(x.f2),
+        changePct: num(x.f3),
+        volume: num(x.f5),
+        amount: num(x.f6),
+        liveName: String(x.f14 || '').trim(),
+      },
+    ])
+  );
+
+  return items
+    .map((it) => {
+      const hit = byCode.get(String(it.code).padStart(6, '0'));
+      if (!hit) return null;
+      return { ...it, name: it.name || hit.liveName, ...hit };
+    })
+    .filter(Boolean);
+}
+
 /** 情绪/属性类伪板块，不能代表主流方向，排除出 RPS5 排名 */
 const NOISE_BOARD =
   /连板|涨停|跌停|昨日|次新|st板块|风险警示|退市|融资融券|标准普尔|富时|msci|沪股通|深股通|中字头|破净|预盈|预亏|高送转|参股|机构重仓|基金重仓|QFII|社保|举牌|大盘|中盘|小盘|微盘/i;

@@ -43,7 +43,7 @@ npm start
 | `npm run stock -- 贵州茅台 600519` | 只分析指定几只（**支持中文名**） |
 | `npm run note -- 远东股份 英力特` | 生成明日交易便签（现价/买/卖/注意项） |
 | `npm run tail` | **尾盘选股**：今天尾盘能买哪些、买入点、买入理由 |
-| `npm run boards` | **板块强度**：当日前十强度板块、是否分化/资金/走强（HTML） |
+| `npm run boards` | **板块强度**：市场风格 + 量能 + 前十强度板块（HTML） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -82,12 +82,22 @@ npm run tail -- --no-market # 跳过大盘分析，更快
 只统计**当天交易日**行业板块强度（不跑选股），自动打开 HTML：
 
 ```bash
-npm run boards              # 前 10 强度板块
-npm run 板块                # 同上
-npm run boards -- --top=15  # 前 15
-npm run boards -- --concept # 行业+概念一起排
-npm run boards -- --no-open # 不自动打开浏览器
+npm run boards                # 前 10 强度板块
+npm run 板块                  # 同上
+npm run boards -- --top=15    # 前 15
+npm run boards -- --concept   # 行业+概念一起排
+npm run boards -- --no-market # 跳过市场风格与量能统计
+npm run boards -- --no-open   # 不自动打开浏览器
 ```
+
+顶部先给出**当前市场风格与量能**：
+
+- **市场风格**：大小盘、成长价值两个维度，用宽基指数横向比较得出
+  （小盘＝中证1000+国证2000，大盘＝上证50+沪深300；成长＝创业板指+科创50，价值＝上证50+中证红利）
+- **量能**：两市成交额与近 5 日均量对比，判定显著放量 / 温和放量 / 持平 / 缩量。
+  盘中会按已过交易时间折算成全天量，所以上午跑也不会低估
+- **主导方向**：把当日板块归入科技 / 医药 / 高端制造 / 消费 / 周期资源 / 金融地产 / 基建公用，
+  看谁在前十超配且跑赢全市场；都不明显时直接标「无明确主导方向」，不硬造主线
 
 每张板块卡片给出：
 
@@ -196,6 +206,7 @@ src/
     session.js          交易时段判定 + 行情新鲜度交叉验证
     tailEnd.js          尾盘筛选：时段折算量能 + 日内位置 + 尾盘定价
     boardStrength.js    当日板块强度 / 分化 / 资金 / 走强
+    marketStyle.js      市场风格（大小盘、成长价值）+ 两市量能
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
   output/

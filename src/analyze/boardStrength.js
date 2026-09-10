@@ -5,6 +5,7 @@
 import dayjs from 'dayjs';
 import { fetchTailBoardSignals } from '../crawl/eastmoney.js';
 import { sessionPhase } from './session.js';
+import { analyzeMarketStyle, summarizeBoardStyle } from './marketStyle.js';
 
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
@@ -229,15 +230,18 @@ function buildSummary(all, topBoards) {
 }
 
 /**
- * @param {{ top?: number, includeConcept?: boolean, onProgress?: Function, now?: import('dayjs').Dayjs }} opts
+ * @param {{ top?: number, includeConcept?: boolean, withMarket?: boolean,
+ *   onProgress?: Function, now?: import('dayjs').Dayjs }} opts
  */
 export async function analyzeBoardStrength({
   top = 10,
   includeConcept = false,
+  withMarket = true,
   onProgress,
   now = dayjs(),
 } = {}) {
   const phase = sessionPhase(now);
+  const tradeDate = now.format('YYYY-MM-DD');
   onProgress?.(
     includeConcept ? '拉取行业+概念板块当日强度...' : '拉取行业板块当日强度...'
   );
@@ -279,9 +283,18 @@ export async function analyzeBoardStrength({
     .sort((a, b) => a.strengthScore - b.strengthScore || a.changePct - b.changePct)
     .slice(0, 5);
 
+  const boardStyle = summarizeBoardStyle(unique, topBoards);
+  let turnover = null;
+  let styleTilt = null;
+  if (withMarket) {
+    const m = await analyzeMarketStyle({ phase, tradeDate, onProgress }).catch(() => null);
+    turnover = m?.turnover || null;
+    styleTilt = m?.styleTilt || null;
+  }
+
   return {
     generatedAt: now.format('YYYY-MM-DD HH:mm:ss'),
-    tradeDate: now.format('YYYY-MM-DD'),
+    tradeDate,
     phase,
     includeConcept,
     top,
@@ -289,5 +302,20 @@ export async function analyzeBoardStrength({
     weakBoards,
     summary,
     boardCount: unique.length,
+    marketStyle: {
+      turnover,
+      styleTilt,
+      boardStyle,
+      headline: buildStyleHeadline({ styleTilt, boardStyle, turnover }),
+    },
   };
+}
+
+/** 一句话概括：风格 + 主导方向 + 量能 */
+function buildStyleHeadline({ styleTilt, boardStyle, turnover }) {
+  const bits = [];
+  if (styleTilt?.available) bits.push(styleTilt.label);
+  bits.push(boardStyle?.dominant ? `${boardStyle.dominant}主导` : '无明确主导方向');
+  if (turnover?.label && turnover.level !== 'unknown') bits.push(turnover.label);
+  return bits.join(' · ') || '风格与量能数据不足';
 }

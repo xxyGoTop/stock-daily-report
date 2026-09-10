@@ -23,10 +23,11 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
-  const args = { top: 10, concept: false, noOpen: false, help: false };
+  const args = { top: 10, concept: false, noOpen: false, noMarket: false, help: false };
   for (const a of argv) {
     if (a === '--concept') args.concept = true;
     else if (a === '--no-open') args.noOpen = true;
+    else if (a === '--no-market') args.noMarket = true;
     else if (a.startsWith('--top=')) {
       args.top = Math.min(30, Math.max(5, Number(a.slice(6)) || 10));
     } else if (a === '-h' || a === '--help') {
@@ -48,6 +49,7 @@ function fmtPct(v) {
 
 function printConsole(result) {
   const s = result.summary || {};
+  const ms = result.marketStyle || {};
   console.log('');
   console.log('═'.repeat(64));
   console.log(`当日板块强度 · ${result.tradeDate} · ${result.phase?.label || ''}`);
@@ -57,6 +59,21 @@ function printConsole(result) {
     `板块涨/跌 ${s.upCount}/${s.downCount} · 前十均涨 ${fmtPct(s.avgTopChange)} · 前十资金 ${s.topFundText}`
   );
   console.log(`走强 ${s.strongCount} · 分化 ${s.divergedCount} · 资金流入 ${s.fundInCount}`);
+
+  if (ms.headline) {
+    console.log('');
+    console.log(`【市场风格与量能】${ms.headline}`);
+    if (ms.styleTilt?.available) console.log(`  风格：${ms.styleTilt.label}｜${ms.styleTilt.note}`);
+    if (ms.boardStyle?.available) console.log(`  主导：${ms.boardStyle.dominant}｜${ms.boardStyle.note}`);
+    if (ms.turnover && ms.turnover.level !== 'unknown') {
+      const t = ms.turnover;
+      console.log(
+        `  量能：${t.label}｜今日成交 ${t.amountText}` +
+          `${t.intraday ? `（折算全天约 ${t.projectedAmountText}）` : ''}` +
+          `${t.ratio != null ? `，为近5日均量 ${(t.ratio * 100).toFixed(0)}%` : ''}`
+      );
+    }
+  }
   console.log('');
   console.log(`【前 ${result.top} 强度板块】`);
   for (const b of result.topBoards || []) {
@@ -80,9 +97,10 @@ async function main() {
   npm run 板块                   同上
   npm run boards -- --top=15     前 15
   npm run boards -- --concept    行业+概念一起排
+  npm run boards -- --no-market  跳过市场风格与量能统计（更快）
   npm run boards -- --no-open    不自动打开浏览器
 
-输出：强度、是否分化、资金情况、是否走强。`);
+输出：市场风格、两市量能、板块强度、是否分化、资金情况、是否走强。`);
     return;
   }
 
@@ -93,6 +111,7 @@ async function main() {
   const result = await analyzeBoardStrength({
     top: args.top,
     includeConcept: args.concept,
+    withMarket: !args.noMarket,
     onProgress: progress,
     now,
   });

@@ -92,6 +92,97 @@ function boardRow(b) {
   </article>`;
 }
 
+function turnoverClass(level = '') {
+  if (level === 'surge' || level === 'up') return 'up';
+  if (level === 'shrink' || level === 'down') return 'down';
+  return '';
+}
+
+function marketStyleHtml(ms) {
+  if (!ms) return '';
+  const t = ms.turnover;
+  const st = ms.styleTilt;
+  const bs = ms.boardStyle;
+
+  const indexHtml = (st?.indices || [])
+    .map(
+      (x) =>
+        `<span class="chip ${pctClass(x.changePct)}">${esc(x.name)} ${fmtPct(x.changePct)}</span>`
+    )
+    .join('');
+
+  const catHtml = (bs?.categories || [])
+    .slice(0, 6)
+    .map(
+      (c) => `
+      <div class="cat">
+        <b>${esc(c.name)}</b>
+        <span class="${pctClass(c.avgChange)}">${fmtPct(c.avgChange)}</span>
+        <em>前十${esc(c.topCount)}席 · 上涨${(c.upRatio * 100).toFixed(0)}% · 主力${esc(c.netInflowText)}</em>
+      </div>`
+    )
+    .join('');
+
+  const turnoverBlock = t
+    ? `
+      <div class="card">
+        <h3>量能</h3>
+        <div class="big ${turnoverClass(t.level)}">${esc(t.label)}</div>
+        <p>
+          今日成交 ${esc(t.amountText)}${
+            t.intraday ? ` · 折算全天约 ${esc(t.projectedAmountText)}` : ''
+          }<br />
+          ${t.ratio != null ? `较近5日均量 ${(t.ratio * 100).toFixed(0)}%` : '缺少可比历史量'} · ${esc(t.note)}
+        </p>
+      </div>`
+    : '';
+
+  const styleBlock = st?.available
+    ? `
+      <div class="card">
+        <h3>市场风格</h3>
+        <div class="big">${esc(st.label)}</div>
+        <p>${esc(st.note)}</p>
+      </div>`
+    : '';
+
+  const boardStyleBlock = bs?.available
+    ? `
+      <div class="card">
+        <h3>主导方向</h3>
+        <div class="big">${esc(bs.dominant || '-')}</div>
+        <p>${esc(bs.note)}</p>
+      </div>`
+    : '';
+
+  if (!turnoverBlock && !styleBlock && !boardStyleBlock) return '';
+
+  return `
+    <section class="section">
+      <div class="section-head">
+        <h2>当前市场风格与量能</h2>
+        <div class="hint">宽基指数横向比较 + 两市成交量同比（盘中按已过交易时间折算）</div>
+      </div>
+      <div class="cards">
+        ${styleBlock}
+        ${turnoverBlock}
+        ${boardStyleBlock}
+        ${
+          (t?.detail || []).length
+            ? `<div class="card">
+                 <h3>沪深成交</h3>
+                 <p>${t.detail
+                   .map((d) => `${esc(d.name)} ${esc(d.amountText)}（${fmtPct(d.changePct)}）`)
+                   .join('<br />')}</p>
+               </div>`
+            : ''
+        }
+      </div>
+      ${indexHtml ? `<div class="chips">${indexHtml}</div>` : ''}
+      ${catHtml ? `<div class="cats">${catHtml}</div>` : ''}
+    </section>`;
+}
+
 function weakRow(b, i) {
   return `
   <div class="weak-item">
@@ -106,6 +197,7 @@ function weakRow(b, i) {
 export function renderBoardStrengthHtml(result) {
   const s = result.summary || {};
   const phase = result.phase || {};
+  const ms = result.marketStyle || null;
   const topHtml = (result.topBoards || []).map(boardRow).join('') || '<div class="muted">暂无板块数据</div>';
   const weakHtml = (result.weakBoards || []).map(weakRow).join('') || '<div class="muted">-</div>';
 
@@ -137,10 +229,11 @@ export function renderBoardStrengthHtml(result) {
   h1 { margin: 0 0 6px; font-size: 22px; }
   .sub { color: var(--muted); font-size: 12px; }
   .badge {
-    display: inline-block; margin-top: 10px; padding: 4px 10px; border-radius: 999px;
+    display: inline-block; margin-top: 10px; margin-right: 6px; padding: 4px 10px; border-radius: 999px;
     background: rgba(61,139,253,.14); color: #9ec1ff; font-size: 12px;
     border: 1px solid rgba(61,139,253,.3);
   }
+  .badge.alt { background: rgba(31,170,110,.14); color: #7dffa8; border-color: rgba(31,170,110,.3); }
   .cards {
     display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px;
   }
@@ -198,6 +291,19 @@ export function renderBoardStrengthHtml(result) {
     display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px;
     font-size: 11px; color: var(--muted);
   }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
+  .chip {
+    font-size: 11px; padding: 3px 8px; border-radius: 6px;
+    background: #243041; border: 1px solid var(--line);
+  }
+  .cats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
+  @media (max-width: 720px) { .cats { grid-template-columns: 1fr; } }
+  .cat {
+    display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
+    padding: 7px 10px; border-radius: 8px; background: #141a22;
+    border: 1px solid var(--line); font-size: 12px;
+  }
+  .cat em { color: var(--muted); font-style: normal; font-size: 11px; }
   .weak-list { display: flex; flex-direction: column; gap: 6px; }
   .weak-item {
     display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
@@ -217,6 +323,7 @@ export function renderBoardStrengthHtml(result) {
         result.includeConcept ? '（含概念）' : '（行业）'
       }</div>
       <div class="badge">${esc(s.structure || '-')} · ${esc(s.tone || '')}</div>
+      ${ms?.headline ? `<div class="badge alt">${esc(ms.headline)}</div>` : ''}
       <div class="cards">
         <div class="card">
           <h3>市场结构</h3>
@@ -239,6 +346,8 @@ export function renderBoardStrengthHtml(result) {
         </div>
       </div>
     </header>
+
+    ${marketStyleHtml(ms)}
 
     <section class="section">
       <div class="section-head">
