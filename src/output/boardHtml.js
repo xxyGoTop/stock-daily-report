@@ -4,25 +4,7 @@
 
 import fs from 'node:fs';
 import path from 'node:path';
-
-function esc(s) {
-  return String(s ?? '')
-    .replace(/&/g, '&amp;')
-    .replace(/</g, '&lt;')
-    .replace(/>/g, '&gt;')
-    .replace(/"/g, '&quot;');
-}
-
-function fmtPct(v) {
-  if (v == null || Number.isNaN(+v)) return '-';
-  const n = +v;
-  return `${n >= 0 ? '+' : ''}${n.toFixed(2)}%`;
-}
-
-function pctClass(v) {
-  if (v == null || Number.isNaN(+v)) return '';
-  return +v >= 0 ? 'up' : 'down';
-}
+import { baseCss, esc, fmtPct, pctClass } from './theme.js';
 
 function trendClass(label = '') {
   if (label === '走强') return 'tag-buy';
@@ -41,6 +23,50 @@ function fundClass(level = '') {
   if (level === 'strong_in' || level === 'in') return 'fund-in';
   if (level === 'strong_out' || level === 'out') return 'fund-out';
   return 'fund-flat';
+}
+
+function leaderRow(s) {
+  return `
+        <div class="lead${s.leaderRank === 1 ? ' top' : ''}">
+          <div class="lead-rank">${s.leaderRank === 1 ? '龙头' : `龙${s.leaderRank}`}</div>
+          <div>
+            <div class="lead-top">
+              <strong>${esc(s.name)}</strong>
+              <span class="pill soft">${esc(s.code)}</span>
+              <span class="${pctClass(s.changePct)}">${fmtPct(s.changePct)}</span>
+              ${s.boards >= 2 ? `<span class="tag tag-sell">${esc(s.boards)}连板</span>` : ''}
+              ${s.boards === 1 && s.atLimit ? '<span class="tag tag-sell">涨停</span>' : ''}
+              <span class="chip">额 ${esc(s.amountText)}</span>
+              <span class="chip ${s.mainNetInflow >= 0 ? 'fund-in' : 'fund-out'}">主力 ${esc(
+                s.mainNetInflowText
+              )}</span>
+              <span class="chip">流值 ${esc(s.circMVText)}</span>
+              <span class="pill soft">龙头分 ${esc(s.leaderScore)}</span>
+            </div>
+            ${s.reasons?.length ? `<div class="lead-why">${esc(s.reasons.join(' · '))}</div>` : ''}
+          </div>
+        </div>`;
+}
+
+function leadersHtml(b) {
+  if (!b.leaders) return '';
+  if (!b.leaders.length) {
+    return `
+      <div class="leaders">
+        <div class="leaders-head"><b>龙头股</b><span>${esc(b.leaderNote || '无')}</span></div>
+      </div>`;
+  }
+  return `
+      <div class="leaders">
+        <div class="leaders-head">
+          <b>龙头股</b>
+          <span class="tag ${b.leaderConfident ? 'tag-buy' : 'tag-watch'}">${
+            b.leaderConfident ? '龙头明确' : '龙头待定'
+          }</span>
+          <span>${esc(b.leaderNote || '')}（成分股 ${esc(b.leaderPool)} 只中选出）</span>
+        </div>
+        <div class="lead-list">${b.leaders.map(leaderRow).join('')}</div>
+      </div>`;
 }
 
 function boardRow(b) {
@@ -84,10 +110,12 @@ function boardRow(b) {
         <span>近5日 ${fmtPct(b.change5)} · 相对加速 ${b.acceleration >= 0 ? '+' : ''}${esc(b.acceleration)}</span>
         ${
           b.leader
-            ? `<span>领涨 ${esc(b.leader)}${b.leaderCode ? `(${esc(b.leaderCode)})` : ''} ${fmtPct(b.leaderChangePct)}</span>`
+            ? `<span>东财领涨 ${esc(b.leader)}${b.leaderCode ? `(${esc(b.leaderCode)})` : ''} ${fmtPct(b.leaderChangePct)}</span>`
             : ''
         }
       </div>
+
+      ${leadersHtml(b)}
     </div>
   </article>`;
 }
@@ -207,113 +235,7 @@ export function renderBoardStrengthHtml(result) {
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>板块强度 · ${esc(result.tradeDate)}</title>
-<style>
-  :root {
-    --bg: #0b0f14; --panel: #171d25; --line: #2a3442; --text: #e8eef7;
-    --muted: #8b9bb0; --accent: #3d8bfd; --buy: #1faa6e; --sell: #e25555; --watch: #d6a23a;
-  }
-  * { box-sizing: border-box; }
-  body {
-    margin: 0; font-family: "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
-    background:
-      radial-gradient(1200px 600px at 10% -10%, rgba(61,139,253,.18), transparent 55%),
-      radial-gradient(900px 500px at 90% 0%, rgba(31,170,110,.12), transparent 50%),
-      var(--bg);
-    color: var(--text);
-  }
-  .wrap { max-width: 960px; margin: 0 auto; padding: 20px 14px 48px; }
-  .hero {
-    background: var(--panel); border: 1px solid var(--line); border-radius: 14px;
-    padding: 18px 16px; margin-bottom: 14px;
-  }
-  h1 { margin: 0 0 6px; font-size: 22px; }
-  .sub { color: var(--muted); font-size: 12px; }
-  .badge {
-    display: inline-block; margin-top: 10px; margin-right: 6px; padding: 4px 10px; border-radius: 999px;
-    background: rgba(61,139,253,.14); color: #9ec1ff; font-size: 12px;
-    border: 1px solid rgba(61,139,253,.3);
-  }
-  .badge.alt { background: rgba(31,170,110,.14); color: #7dffa8; border-color: rgba(31,170,110,.3); }
-  .cards {
-    display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; margin-top: 12px;
-  }
-  @media (max-width: 720px) { .cards { grid-template-columns: 1fr; } }
-  .card {
-    background: #1e2630; border: 1px solid var(--line); border-radius: 10px; padding: 10px 12px;
-  }
-  .card h3 { margin: 0 0 6px; font-size: 12px; color: #7dffa8; }
-  .card p { margin: 0; font-size: 12px; color: #c9d4e2; line-height: 1.45; }
-  .card .big { font-size: 18px; font-weight: 700; color: var(--text); margin-bottom: 4px; }
-  .section {
-    margin-top: 14px; background: rgba(23,29,37,.85); border: 1px solid var(--line);
-    border-radius: 14px; padding: 12px;
-  }
-  .section-head { margin-bottom: 8px; padding-bottom: 8px; border-bottom: 1px solid var(--line); }
-  .section-head h2 { margin: 0; font-size: 16px; }
-  .section-head .hint { color: var(--muted); font-size: 11px; margin-top: 2px; }
-  .list { display: flex; flex-direction: column; gap: 8px; }
-  .row {
-    display: grid; grid-template-columns: 36px 1fr; gap: 8px;
-    background: #141a22; border: 1px solid var(--line); border-radius: 10px; padding: 10px;
-  }
-  .row-idx {
-    font-size: 13px; font-weight: 700; color: var(--accent);
-    display: flex; align-items: flex-start; justify-content: center; padding-top: 2px;
-  }
-  .row-top { display: flex; justify-content: space-between; gap: 8px; flex-wrap: wrap; }
-  .name { font-size: 14px; }
-  .pill {
-    font-size: 10px; padding: 1px 6px; border-radius: 999px; margin-left: 4px;
-    background: rgba(61,139,253,.14); color: #b7d0ff; border: 1px solid rgba(61,139,253,.25);
-    white-space: nowrap;
-  }
-  .pill.soft { background: #243041; color: #9eb0c5; border-color: var(--line); }
-  .quote { font-size: 13px; white-space: nowrap; }
-  .quote b { font-size: 16px; }
-  .up { color: #ff6b6b; } .down { color: #3dd68c; }
-  .tag { font-size: 11px; padding: 2px 7px; border-radius: 6px; font-weight: 600; margin-left: 4px; }
-  .tag-buy { background: rgba(31,170,110,.14); color: var(--buy); }
-  .tag-sell { background: rgba(226,85,85,.14); color: var(--sell); }
-  .tag-watch { background: rgba(214,162,58,.14); color: var(--watch); }
-  .tag-warn { background: rgba(255,140,66,.16); color: #ffb070; }
-  .metrics { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 8px; }
-  .metric {
-    display: grid; grid-template-columns: 64px auto 1fr; gap: 8px; align-items: baseline;
-    font-size: 12px; padding: 6px 8px; border-radius: 8px; border: 1px solid var(--line);
-    background: rgba(30,38,48,.7);
-  }
-  .metric span { color: var(--muted); font-size: 11px; }
-  .metric em { color: #a7b4c6; font-style: normal; font-size: 11px; }
-  .fund-in { color: #ff6b6b; }
-  .fund-out { color: #3dd68c; }
-  .fund-flat { color: #c9d4e2; }
-  .detail {
-    display: flex; flex-wrap: wrap; gap: 8px 14px; margin-top: 8px;
-    font-size: 11px; color: var(--muted);
-  }
-  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
-  .chip {
-    font-size: 11px; padding: 3px 8px; border-radius: 6px;
-    background: #243041; border: 1px solid var(--line);
-  }
-  .cats { display: grid; grid-template-columns: repeat(2, 1fr); gap: 6px; margin-top: 10px; }
-  @media (max-width: 720px) { .cats { grid-template-columns: 1fr; } }
-  .cat {
-    display: flex; flex-wrap: wrap; gap: 8px; align-items: baseline;
-    padding: 7px 10px; border-radius: 8px; background: #141a22;
-    border: 1px solid var(--line); font-size: 12px;
-  }
-  .cat em { color: var(--muted); font-style: normal; font-size: 11px; }
-  .weak-list { display: flex; flex-direction: column; gap: 6px; }
-  .weak-item {
-    display: flex; flex-wrap: wrap; gap: 8px; align-items: center;
-    padding: 8px 10px; border-radius: 8px; background: #141a22; border: 1px solid var(--line);
-    font-size: 12px;
-  }
-  .wi { color: var(--accent); font-weight: 700; width: 22px; }
-  .muted { color: var(--muted); font-size: 12px; }
-  footer { margin-top: 16px; color: var(--muted); font-size: 11px; text-align: center; }
-</style>
+<style>${baseCss}</style>
 </head>
 <body>
   <div class="wrap">

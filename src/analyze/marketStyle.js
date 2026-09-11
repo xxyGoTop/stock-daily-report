@@ -129,8 +129,8 @@ export async function analyzeTurnover({ phase, tradeDate, onProgress } = {}) {
   const amount = live.reduce((s, x) => s + (x.amount || 0), 0) || null;
   const liveVolume = live.reduce((s, x) => s + (x.volume || 0), 0) || 0;
 
-  // 历史成交量：沪深两市逐日相加，剔除当日那根（可能是盘中未完成的）
-  const series = new Map();
+  // 历史成交量：沪深两市逐日相加
+  const raw = new Map();
   for (const idx of TURNOVER_INDICES) {
     let kl = [];
     try {
@@ -140,21 +140,28 @@ export async function analyzeTurnover({ phase, tradeDate, onProgress } = {}) {
     }
     for (const k of kl) {
       const d = String(k.date).slice(0, 10);
-      series.set(d, (series.get(d) || 0) + (k.volume || 0));
+      raw.set(d, (raw.get(d) || 0) + (k.volume || 0));
     }
   }
 
-  const days = [...series.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
+  const rawDays = [...raw.entries()].sort((a, b) => (a[0] < b[0] ? -1 : 1));
   const today = tradeDate || null;
-  const lastDay = days.length ? days[days.length - 1][0] : null;
-  // 收盘前最后一根可能就是今天的盘中量，做同比时必须排除
-  const todayBarIsLive = !!lastDay && (!today || lastDay >= today) && phase?.live;
-  const history = todayBarIsLive ? days.slice(0, -1) : days;
+  const lastDay = rawDays.length ? rawDays[rawDays.length - 1][0] : null;
+
+  // 日K的成交量单位随数据源变：新浪/腾讯给「股」，东财给「手」，而实时 f5 固定是「手」。
+  // 哪个源应答是不确定的，所以不能写死倍数——拿K线里最近一根和实时量对齐，自己校准。
+  const refBar = liveVolume ? raw.get(lastDay) || null : null;
+  const volumeScale = volumeScaleOf(refBar, liveVolume);
+  const days = rawDays.map(([d, v]) => [d, v / volumeScale]);
+  const series = new Map(days);
+
+  // 今天这根不能进自己的对比基准：盘中它不完整，收盘后它就是被比较的那一天
+  const history = today ? days.filter(([d]) => d < today) : days.slice(0, -1);
   const prev5 = history.slice(-5).map(([, v]) => v);
   const avgVolume5 = prev5.length ? prev5.reduce((s, v) => s + v, 0) / prev5.length : null;
 
-  const rawVolume =
-    liveVolume || (lastDay && todayBarIsLive ? series.get(lastDay) : days.at(-1)?.[1]) || 0;
+  const todayBar = today && lastDay && lastDay >= today ? series.get(lastDay) : null;
+  const rawVolume = liveVolume || todayBar || days.at(-1)?.[1] || 0;
   const elapsed = phase?.live ? Math.max(0.15, Number(phase.ratio) || 0) : 1;
   const projectedVolume = phase?.live ? rawVolume / elapsed : rawVolume;
   const projectedAmount = amount != null && phase?.live ? amount / elapsed : amount;
@@ -211,6 +218,20 @@ export async function analyzeTurnover({ phase, tradeDate, onProgress } = {}) {
       amountText: fmtYi(x.amount),
     })),
   };
+}
+
+/**
+ * K线成交量相对实时成交量的单位倍数
+ *
+ * 只在 1（同为「手」）和 100（K线是「股」）之间选：
+ * 相邻交易日的量能波动远到不了 30 倍，所以这个量级差只可能是单位问题。
+ */
+export function volumeScaleOf(klineVolume, liveVolume) {
+  if (!klineVolume || !liveVolume) return 1;
+  const r = klineVolume / liveVolume;
+  if (r > 30) return 100;
+  if (r < 1 / 30) return 1 / 100;
+  return 1;
 }
 
 /** 宽基指数横向比较出的风格倾向 */

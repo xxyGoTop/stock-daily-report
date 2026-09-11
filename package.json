@@ -16,7 +16,9 @@
     "tail": "node src/tail.js",
     "尾盘": "node src/tail.js",
     "boards": "node src/boards.js",
-    "板块": "node src/boards.js"
+    "板块": "node src/boards.js",
+    "review": "node src/review.js",
+    "复盘": "node src/review.js"
   },
   "engines": {
     "node": ">=18"

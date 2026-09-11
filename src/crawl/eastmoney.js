@@ -275,6 +275,226 @@ export async function fetchIndexRealtime(items = []) {
     .filter(Boolean);
 }
 
+/**
+ * 全市场涨跌家数
+ *
+ * 不逐页扫 5000 只股票：沪深两条综合指数的 f104/f105/f106 就是交易所口径的
+ * 上涨/下跌/平盘家数，一次请求即可。
+ */
+export async function fetchMarketBreadth() {
+  const secids = ['1.000001', '0.399001'].join(',');
+  const query =
+    `fltt=2&invt=2&fields=${encodeURIComponent('f12,f14,f104,f105,f106')}` +
+    `&secids=${encodeURIComponent(secids)}`;
+
+  let list = [];
+  for (const host of CLIST_HOSTS) {
+    try {
+      const data = await fetchJson(`${host}/api/qt/ulist.np/get?${query}`, { retries: 2 });
+      list = data?.data?.diff || [];
+      if (list.length) break;
+    } catch {
+      /* next host */
+    }
+  }
+  if (!list.length) return null;
+
+  const detail = list.map((x) => ({
+    name: String(x.f14 || ''),
+    up: num(x.f104),
+    down: num(x.f105),
+    flat: num(x.f106),
+  }));
+  const up = detail.reduce((s, d) => s + d.up, 0);
+  const down = detail.reduce((s, d) => s + d.down, 0);
+  const flat = detail.reduce((s, d) => s + d.flat, 0);
+  const total = up + down + flat;
+
+  return {
+    up,
+    down,
+    flat,
+    total,
+    upRatio: total ? +(up / total).toFixed(3) : null,
+    detail,
+  };
+}
+
+const POOL_UT = '7eea3edcaed734bea9cbfc24409ed989';
+const POOL_HOSTS = ['https://push2ex.eastmoney.com', 'https://push2ex.eastmoney.com'];
+
+async function fetchPool(kind, date, { pagesize = 200 } = {}) {
+  const sort = kind === 'ZT' ? 'fbt%3Aasc' : 'fund%3Aasc';
+  const path =
+    `/getTopic${kind}Pool?ut=${POOL_UT}&dpt=wz.ztzt` +
+    `&Pageindex=0&pagesize=${pagesize}&sort=${sort}&date=${date}`;
+
+  for (const host of POOL_HOSTS) {
+    try {
+      const data = await fetchJson(host + path, {
+        retries: 2,
+        referer: 'https://quote.eastmoney.com/ztb/detail',
+      });
+      if (data?.data) return data.data;
+      // rc=0 但 data 为 null：该日无数据（非交易日或盘前）
+      if (data?.rc === 0) return { tc: 0, pool: [] };
+    } catch {
+      /* next host */
+    }
+  }
+  return null;
+}
+
+/** 涨停池：p/zdp 为放大后的整数，lbc=连板数，zbc=炸板次数 */
+function mapZtRow(x) {
+  return {
+    code: String(x.c || ''),
+    name: String(x.n || '').replace(/\s+/g, ''),
+    price: num(x.p) / 1000,
+    changePct: num(x.zdp),
+    amount: num(x.amount),
+    circMV: num(x.ltsz),
+    turnover: num(x.hs),
+    boards: num(x.lbc) || 1,
+    firstSealTime: String(x.fbt ?? ''),
+    lastSealTime: String(x.lbt ?? ''),
+    sealFund: num(x.fund),
+    brokenTimes: num(x.zbc),
+    industry: String(x.hybk || '').trim(),
+    statDays: num(x.zttj?.days),
+    statCount: num(x.zttj?.ct),
+  };
+}
+
+function mapPlainRow(x) {
+  return {
+    code: String(x.c || ''),
+    name: String(x.n || '').replace(/\s+/g, ''),
+    price: num(x.p) / 1000,
+    changePct: num(x.zdp),
+    amount: num(x.amount),
+    circMV: num(x.ltsz),
+    turnover: num(x.hs),
+    industry: String(x.hybk || '').trim(),
+    days: num(x.days),
+    openTimes: num(x.oc),
+  };
+}
+
+/**
+ * 涨停 / 跌停 / 炸板三个池
+ *
+ * @param {{ date?: string }} opts date 形如 20260911，默认今天
+ */
+export async function fetchLimitPools({ date } = {}) {
+  const d = String(date || '').replace(/-/g, '') || null;
+  if (!d) throw new Error('fetchLimitPools 需要 date（YYYYMMDD）');
+
+  const [zt, dt, zb] = await Promise.all([
+    fetchPool('ZT', d),
+    fetchPool('DT', d),
+    fetchPool('ZB', d),
+  ]);
+
+  const limitUp = (zt?.pool || []).map(mapZtRow).sort((a, b) => b.boards - a.boards || b.sealFund - a.sealFund);
+  const limitDown = (dt?.pool || []).map(mapPlainRow);
+  const broken = (zb?.pool || []).map(mapPlainRow);
+
+  return {
+    date: d,
+    available: !!(zt || dt || zb),
+    limitUpCount: zt?.tc ?? limitUp.length,
+    limitDownCount: dt?.tc ?? limitDown.length,
+    brokenCount: zb?.tc ?? broken.length,
+    limitUp,
+    limitDown,
+    broken,
+  };
+}
+
+/**
+ * 强势股家数（涨幅 >7% / >5%）
+ *
+ * 按涨幅降序翻页，一旦当页最小涨幅已低于阈值就停，
+ * 弱市下通常 1~2 页就够，不必全市场扫。
+ */
+export async function fetchStrongCount({ maxPages = 8 } = {}) {
+  const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23,m:0+t:81+s:2048';
+  let over5 = 0;
+  let over7 = 0;
+  let scanned = 0;
+
+  for (let pn = 1; pn <= maxPages; pn++) {
+    let list = [];
+    try {
+      const query =
+        `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f3` +
+        `&fs=${encodeURIComponent(fs)}&fields=f12,f14,f3`;
+      const data = await fetchClist(query);
+      list = data?.data?.diff || [];
+    } catch {
+      break;
+    }
+    if (!list.length) break;
+
+    let pageMin = Infinity;
+    for (const item of list) {
+      const chg = num(item.f3);
+      scanned += 1;
+      if (chg >= 7) over7 += 1;
+      if (chg >= 5) over5 += 1;
+      if (chg < pageMin) pageMin = chg;
+    }
+    if (pageMin < 5) break;
+    await sleep(150);
+  }
+
+  return { over5, over7, scanned };
+}
+
+/**
+ * 板块成分股（按涨幅降序）
+ *
+ * @param {string} boardCode 板块代码，形如 BK1036
+ * @param {{ limit?: number }} [opts]
+ */
+export async function fetchBoardMembers(boardCode, { limit = 40 } = {}) {
+  const bk = String(boardCode || '').trim();
+  if (!/^BK\d+$/i.test(bk)) return [];
+
+  const fields = 'f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f184';
+  const query =
+    `pn=1&pz=${Math.min(100, Math.max(5, limit))}&po=1&np=1&fltt=2&invt=2&fid=f3` +
+    `&fs=${encodeURIComponent(`b:${bk.toUpperCase()}+f:!50`)}&fields=${fields}`;
+
+  let list = [];
+  try {
+    const data = await fetchClist(query);
+    list = data?.data?.diff || [];
+  } catch {
+    return [];
+  }
+
+  return list
+    .map((x) => ({
+      code: String(x.f12 || '').padStart(6, '0'),
+      name: String(x.f14 || '').replace(/\s+/g, ''),
+      market: num(x.f13) === 1 ? 'sh' : 'sz',
+      price: num(x.f2),
+      changePct: num(x.f3),
+      volume: num(x.f5),
+      amount: num(x.f6),
+      turnover: num(x.f8),
+      volumeRatio: num(x.f10),
+      totalMV: num(x.f20),
+      circMV: num(x.f21),
+      mainNetInflow: num(x.f62),
+      mainNetInflowPct: num(x.f184),
+    }))
+    // 停牌（无价）和退市整理股不参与龙头评选
+    .filter((s) => s.price > 0 && s.code && !/退|ST\*?$/i.test(s.name));
+}
+
 /** 情绪/属性类伪板块，不能代表主流方向，排除出 RPS5 排名 */
 const NOISE_BOARD =
   /连板|涨停|跌停|昨日|次新|st板块|风险警示|退市|融资融券|标准普尔|富时|msci|沪股通|深股通|中字头|破净|预盈|预亏|高送转|参股|机构重仓|基金重仓|QFII|社保|举牌|大盘|中盘|小盘|微盘/i;

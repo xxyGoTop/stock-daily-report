@@ -3,9 +3,10 @@
  */
 
 import dayjs from 'dayjs';
-import { fetchTailBoardSignals } from '../crawl/eastmoney.js';
+import { fetchLimitPools, fetchTailBoardSignals } from '../crawl/eastmoney.js';
 import { sessionPhase } from './session.js';
 import { analyzeMarketStyle, summarizeBoardStyle } from './marketStyle.js';
+import { attachBoardLeaders, buildZtInfo } from './boardLeaders.js';
 
 function clamp(n, lo, hi) {
   return Math.max(lo, Math.min(hi, n));
@@ -231,12 +232,15 @@ function buildSummary(all, topBoards) {
 
 /**
  * @param {{ top?: number, includeConcept?: boolean, withMarket?: boolean,
+ *   withLeaders?: boolean, leaderCount?: number,
  *   onProgress?: Function, now?: import('dayjs').Dayjs }} opts
  */
 export async function analyzeBoardStrength({
   top = 10,
   includeConcept = false,
   withMarket = true,
+  withLeaders = true,
+  leaderCount = 3,
   onProgress,
   now = dayjs(),
 } = {}) {
@@ -274,10 +278,22 @@ export async function analyzeBoardStrength({
     unique.push(b);
   }
 
-  const topBoards = unique.slice(0, top).map((b, i) => ({
+  let topBoards = unique.slice(0, top).map((b, i) => ({
     ...b,
     strengthRank: i + 1,
   }));
+
+  if (withLeaders && topBoards.length) {
+    // 涨停池只拉一次，供所有板块共用，龙头评分里用来识别涨停和连板
+    const pools = await fetchLimitPools({ date: now.format('YYYYMMDD') }).catch(() => null);
+    const ztInfo = buildZtInfo(pools?.limitUp || []);
+    topBoards = await attachBoardLeaders(topBoards, {
+      take: leaderCount,
+      ztInfo,
+      onProgress,
+    });
+  }
+
   const summary = buildSummary(unique, topBoards);
   const weakBoards = [...unique]
     .sort((a, b) => a.strengthScore - b.strengthScore || a.changePct - b.changePct)

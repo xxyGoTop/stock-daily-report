@@ -6,6 +6,7 @@
  *   npm run tail
  *   npm run 尾盘
  *   npm run tail -- --max=8 --fast
+ *   npm run tail -- --no-open   只出文件，不弹浏览器
  */
 
 import fs from 'node:fs';
@@ -15,15 +16,18 @@ import dayjs from 'dayjs';
 
 import { screenTailEnd } from './analyze/tailEnd.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
+import { renderTailHtml, saveTailHtml } from './output/tailHtml.js';
+import { openInBrowser } from './output/open.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
-  const args = { max: 10, fast: false, detailLimit: null, noMarket: false };
+  const args = { max: 10, fast: false, detailLimit: null, noMarket: false, noOpen: false };
   for (const a of argv) {
     if (a === '--fast') args.fast = true;
     else if (a === '--no-market') args.noMarket = true;
+    else if (a === '--no-open') args.noOpen = true;
     else if (a.startsWith('--max=')) {
       args.max = Math.min(30, Math.max(1, Number(a.slice(6)) || 10));
     } else if (a.startsWith('--pool=')) {
@@ -234,9 +238,10 @@ async function main() {
   npm run tail -- --fast       快速模式（少扫一些）
   npm run tail -- --pool=120   细算的候选池大小
   npm run tail -- --no-market  跳过大盘分析（更快）
+  npm run tail -- --no-open    不自动打开 HTML
 
 依据：当日成交量（盘中按已过交易时间折算）、大盘指数中期信号、五日线状态。
-输出：尾盘买入点、止损止盈、建议仓位、买入理由。`);
+输出：HTML/文本/JSON 三份，含尾盘买入点、止损止盈、建议仓位、买入理由。`);
     return;
   }
 
@@ -272,7 +277,11 @@ async function main() {
   fs.writeFileSync(jsonPath, JSON.stringify(result, null, 2), 'utf8');
   fs.writeFileSync(path.join(dayDir, 'latest-tail.txt'), text, 'utf8');
   fs.writeFileSync(path.join(root, 'output', 'latest-tail.txt'), text, 'utf8');
-  console.log(`已保存：\n  ${txtPath}\n  ${jsonPath}\n`);
+
+  const saved = saveTailHtml(renderTailHtml(result), { root, tradeDate: day, stamp });
+  console.log(`已保存：\n  ${saved.htmlPath}\n  ${txtPath}\n  ${jsonPath}\n`);
+
+  if (!args.noOpen) openInBrowser(saved.latestInDay);
 }
 
 main().catch((err) => {

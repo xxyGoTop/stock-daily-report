@@ -11,7 +11,6 @@
 
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
 import dayjs from 'dayjs';
 
 import { runShortTermStrategy, summarizeShortTermActions } from './strategy/shortTerm.js';
@@ -29,6 +28,7 @@ import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { attachMarketMeta } from './analyze/marketMeta.js';
 import { attachThemeExpect } from './analyze/themeExpect.js';
 import { fetchTodayHotNews } from './crawl/hotNews.js';
+import { openInBrowser } from './output/open.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
@@ -83,10 +83,6 @@ function splitTokens(input) {
     .flatMap((s) => String(s || '').split(/[\s,，;；|、]+/))
     .map((s) => s.trim())
     .filter(Boolean);
-}
-
-function openInBrowser(filePath) {
-  exec(`cmd /c start "" "${filePath}"`);
 }
 
 async function maybeAttachXueqiu(cards, args, progress) {

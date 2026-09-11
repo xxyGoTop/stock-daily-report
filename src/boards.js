@@ -13,32 +13,39 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { exec } from 'node:child_process';
 import dayjs from 'dayjs';
 
 import { analyzeBoardStrength } from './analyze/boardStrength.js';
 import { renderBoardStrengthHtml, saveBoardStrengthHtml } from './output/boardHtml.js';
+import { openInBrowser } from './output/open.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
-  const args = { top: 10, concept: false, noOpen: false, noMarket: false, help: false };
+  const args = {
+    top: 10,
+    concept: false,
+    noOpen: false,
+    noMarket: false,
+    noLeaders: false,
+    leaders: 3,
+    help: false,
+  };
   for (const a of argv) {
     if (a === '--concept') args.concept = true;
     else if (a === '--no-open') args.noOpen = true;
     else if (a === '--no-market') args.noMarket = true;
+    else if (a === '--no-leaders') args.noLeaders = true;
     else if (a.startsWith('--top=')) {
       args.top = Math.min(30, Math.max(5, Number(a.slice(6)) || 10));
+    } else if (a.startsWith('--leaders=')) {
+      args.leaders = Math.min(6, Math.max(1, Number(a.slice(10)) || 3));
     } else if (a === '-h' || a === '--help') {
       args.help = true;
     }
   }
   return args;
-}
-
-function openInBrowser(filePath) {
-  exec(`cmd /c start "" "${filePath}"`);
 }
 
 function fmtPct(v) {
@@ -83,8 +90,21 @@ function printConsole(result) {
     );
     console.log(
       `    扩散${((b.breadth || 0) * 100).toFixed(0)}%  资金${b.fund?.text || '-'}  ` +
-        `领涨${b.leader || '-'}${fmtPct(b.leaderChangePct)}`
+        `东财领涨${b.leader || '-'}${fmtPct(b.leaderChangePct)}`
     );
+    if (b.leaders?.length) {
+      console.log(`    龙头[${b.leaderConfident ? '明确' : '待定'}]：${b.leaderNote}`);
+      for (const x of b.leaders) {
+        console.log(
+          `      ${x.leaderRank === 1 ? '龙头' : `龙${x.leaderRank}`} ${x.code} ${x.name} ` +
+            `${fmtPct(x.changePct)}${x.boards >= 2 ? ` ${x.boards}连板` : x.atLimit ? ' 涨停' : ''}  ` +
+            `额${x.amountText} 主力${x.mainNetInflowText} 流值${x.circMVText} 分${x.leaderScore}`
+        );
+        if (x.reasons?.length) console.log(`        ${x.reasons.join(' · ')}`);
+      }
+    } else if (b.leaderNote) {
+      console.log(`    龙头：${b.leaderNote}`);
+    }
   }
   console.log('');
 }
@@ -98,9 +118,11 @@ async function main() {
   npm run boards -- --top=15     前 15
   npm run boards -- --concept    行业+概念一起排
   npm run boards -- --no-market  跳过市场风格与量能统计（更快）
+  npm run boards -- --leaders=2  每个板块列 2 只龙头（默认 3）
+  npm run boards -- --no-leaders 跳过龙头筛选（更快）
   npm run boards -- --no-open    不自动打开浏览器
 
-输出：市场风格、两市量能、板块强度、是否分化、资金情况、是否走强。`);
+输出：市场风格、两市量能、板块强度、是否分化、资金情况、是否走强、每个板块的龙头股。`);
     return;
   }
 
@@ -112,6 +134,8 @@ async function main() {
     top: args.top,
     includeConcept: args.concept,
     withMarket: !args.noMarket,
+    withLeaders: !args.noLeaders,
+    leaderCount: args.leaders,
     onProgress: progress,
     now,
   });

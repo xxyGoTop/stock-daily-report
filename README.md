@@ -42,8 +42,9 @@ npm start
 | `npm start -- --fast` | 快速模式，减少翻页与抓取深度 |
 | `npm run stock -- 贵州茅台 600519` | 只分析指定几只（**支持中文名**） |
 | `npm run note -- 远东股份 英力特` | 生成明日交易便签（现价/买/卖/注意项） |
-| `npm run tail` | **尾盘选股**：今天尾盘能买哪些、买入点、买入理由 |
-| `npm run boards` | **板块强度**：市场风格 + 量能 + 前十强度板块（HTML） |
+| `npm run tail` | **尾盘选股**：今天尾盘能买哪些、买入点、买入理由（HTML） |
+| `npm run boards` | **板块强度**：市场风格 + 量能 + 前十强度板块 + 各板块龙头股（HTML） |
+| `npm run review` | **当日复盘**：情绪打分 + 连板梯队 + 今日主线 + 明日关注（HTML） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -73,9 +74,12 @@ npm run 尾盘                # 同上
 npm run tail -- --max=5     # 只要前 5 只
 npm run tail -- --fast      # 少扫一些，约 15 秒出结果
 npm run tail -- --no-market # 跳过大盘分析，更快
+npm run tail -- --no-open   # 不自动打开 HTML
 ```
 
 和其他命令的关键区别：**买入点是当场可挂的价位**，不是明日回踩价；量能会按已过交易时间折算成全天量，所以盘中提前跑也不会低估当日量。
+
+结果同时出 HTML / 文本 / JSON 三份，默认自动弹出 `output/<日期>/latest-tail.html`（快捷入口 `output/latest-tail.html`）。HTML 版把买入点、止损止盈、仓位、五日线、量能、日内位置、资金、买入理由和风险提示按卡片排好，比纯文本好扫。
 
 ### 板块强度 `npm run boards`
 
@@ -87,6 +91,8 @@ npm run 板块                  # 同上
 npm run boards -- --top=15    # 前 15
 npm run boards -- --concept   # 行业+概念一起排
 npm run boards -- --no-market # 跳过市场风格与量能统计
+npm run boards -- --leaders=2 # 每个板块列 2 只龙头（默认 3）
+npm run boards -- --no-leaders # 跳过龙头筛选（更快）
 npm run boards -- --no-open   # 不自动打开浏览器
 ```
 
@@ -105,8 +111,46 @@ npm run boards -- --no-open   # 不自动打开浏览器
 - **是否分化**：齐涨 / 一般 / 分化（少数票硬拉）
 - **资金情况**：主力净流入/流出及金额
 - **是否走强**：走强 / 冲高分化 / 震荡 / 走弱
+- **龙头股**：默认列 3 只，标注涨停/连板、成交额、主力净流入、流通市值和入选理由
+
+#### 龙头股是怎么选的
+
+东财板块快照自带的「领涨股」只是涨幅第一名，一只微盘股拉涨停就能占位，不代表资金认可。所以这里拉板块成分股重新评分：
+
+- **先过门槛**：剔除次新股（N/C 开头）、流通市值 < 15 亿、成交额 < 8000 万、停牌和退市整理股
+- **再多因子打分**：涨幅分位 30 分 + 成交额分位 26 分（资金聚焦度）+ 主力净流入 + 涨停 8 分 + 每多一个连板 6 分（封顶 18）
+- **分位都是板块内部比的**——龙头本来就是同板块比出来的，用绝对阈值在大小板块之间没法比
+- **今天收绿的票不进榜**，哪怕它成交额最大
+- 第一名没甩开第二名 8 分、也没涨停时，标成「**龙头待定**」，明说板块内部还在混战，不硬指一只
+
+举例：通信线缆板块里中天科技成交额 89.8 亿远大于神宇股份的 6.1 亿，但神宇股份 20cm 涨停，最终龙头判给神宇股份——打板资金认的是涨停那只。
 
 结果在 `output/<日期>/latest-boards.html`（快捷入口 `output/latest-boards.html`）。
+
+### 当日复盘 `npm run review`
+
+收盘后跑一次，回答「今天发生了什么、明天该盯什么」。只统计事实与归纳倾向，**不给个股买卖价**——买点仍然用 `npm run tail` / `npm run stock`。
+
+```bash
+npm run review                       # 今天的复盘，自动弹 HTML
+npm run 复盘                         # 同上
+npm run review -- --top=15           # 板块强度取前 15
+npm run review -- --date=2026-09-10  # 复盘指定交易日的涨停/跌停梯队
+npm run review -- --no-news          # 跳过热点新闻
+npm run review -- --no-open          # 不自动打开浏览器
+```
+
+报告包含：
+
+- **情绪打分**（0~100）：涨停家数、封板率、连板高度、赚钱效应、跌停压力五项加权，给出过热 / 偏热 / 中性 / 偏冷 / 过冷及对应的操作倾向。单看涨停数会被一字板低价股误导，所以封板率和跌停数一起参与打分
+- **连板梯队**：按连板数分层，标注所属行业和首次封板时间，直接看出空间板在几板、断层在哪
+- **今日主线**：涨停在行业上的聚集度 × 板块指数是否同步走强，两者都满足才标「已确认」，只有零星涨停的只算题材
+- **风格与量能**：大小盘 / 成长价值倾向、两市成交额与近 5 日均量对比、资金主导大类
+- **明日关注**：由情绪等级、主线确认情况和量能推导出的跟踪点与风险点
+
+结果在 `output/<日期>/latest-review.html`（快捷入口 `output/latest-review.html`）。
+
+> `--date` 只对涨停/跌停/炸板梯队生效；板块强度和量能走的是实时接口，拿不到历史值，跑历史日期时会提示。
 
 三档筛选条件：
 
@@ -176,6 +220,9 @@ output/
     latest.txt       纯文本版
     latest.json      结构化数据，便签和名称解析会复用
     report_HHmmss.*  每次运行的历史快照
+    latest-tail.*    尾盘选股（HTML / 文本 / JSON）
+    latest-boards.*  板块强度
+    latest-review.*  当日复盘
   latest.html        最近一次运行的快捷入口
 ```
 
@@ -186,6 +233,7 @@ src/
   index.js              入口：参数解析、三模块编排、报告生成
   tail.js               入口：尾盘选股命令
   boards.js             入口：当日板块强度统计（HTML）
+  review.js             入口：当日复盘报告（HTML）
   crawl/
     eastmoney.js        行情 / K线 / 股票列表 / 板块快照
     cninfo.js           巨潮公告关键词检索
@@ -206,11 +254,17 @@ src/
     session.js          交易时段判定 + 行情新鲜度交叉验证
     tailEnd.js          尾盘筛选：时段折算量能 + 日内位置 + 尾盘定价
     boardStrength.js    当日板块强度 / 分化 / 资金 / 走强
+    boardLeaders.js     板块龙头股：成分股多因子评分
     marketStyle.js      市场风格（大小盘、成长价值）+ 两市量能
+    review.js           当日复盘：情绪打分 / 连板梯队 / 主线 / 明日关注
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
   output/
+    theme.js            HTML 公共主题与格式化工具
     boardHtml.js        板块强度 HTML
+    tailHtml.js         尾盘选股 HTML
+    reviewHtml.js       当日复盘 HTML
+    open.js             调用系统默认浏览器打开报告
   journal/              交易台账（本地网页 + 统计）
 ```
 
