@@ -3,6 +3,7 @@
  */
 
 import { fetchKlines } from '../crawl/eastmoney.js';
+import { fetchTencentQuote } from '../crawl/tencent.js';
 import { computeIndicators } from './indicators.js';
 import { shortTermPrices, eventDrivenPrices } from './pricing.js';
 import { buildSignalBoard } from './modules.js';
@@ -47,35 +48,8 @@ function pickAction(card, prices) {
 }
 
 async function fetchLiteQuote(code) {
-  const c = String(code).padStart(6, '0');
-  const prefix = c.startsWith('6') || c.startsWith('9') || c.startsWith('5') ? 'sh' : 'sz';
   try {
-    const res = await fetch(`https://qt.gtimg.cn/q=${prefix}${c}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    });
-    const text = await res.text();
-    // 51~名称~代码~现价~昨收~...~涨跌~涨跌幅~...~换手~...~量比约在字段中
-    const parts = text.split('~');
-    if (parts.length < 50) {
-      return {
-        name: parts[1],
-        price: Number(parts[3]) || 0,
-        prevClose: Number(parts[4]) || 0,
-        changePct: Number(parts[32]) || 0,
-        turnover: Number(parts[38]) || 0,
-        volumeRatio: Number(parts[49]) || 0,
-        amplitude: Number(parts[43]) || 0,
-      };
-    }
-    return {
-      name: parts[1],
-      price: Number(parts[3]) || 0,
-      prevClose: Number(parts[4]) || 0,
-      changePct: Number(parts[32]) || 0,
-      turnover: Number(parts[38]) || 0,
-      volumeRatio: Number(parts[49]) || 0,
-      amplitude: Number(parts[43]) || 0,
-    };
+    return await fetchTencentQuote(code);
   } catch {
     return null;
   }

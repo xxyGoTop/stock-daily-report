@@ -3,6 +3,7 @@
  */
 
 import { fetchKlines, fetchActiveStocks } from '../crawl/eastmoney.js';
+import { fetchTencentQuote } from '../crawl/tencent.js';
 import { searchCninfoKeyword } from '../crawl/cninfo.js';
 import { computeIndicators } from './indicators.js';
 import { shortTermPrices, eventDrivenPrices } from './pricing.js';
@@ -30,22 +31,15 @@ function normalizeCodes(input) {
 }
 
 async function fetchQuoteName(code) {
-  const c = String(code).padStart(6, '0');
-  const prefix = c.startsWith('6') || c.startsWith('9') ? 'sh' : 'sz';
   try {
-    const res = await fetch(`https://qt.gtimg.cn/q=${prefix}${c}`, {
-      headers: { 'User-Agent': 'Mozilla/5.0' },
-    });
-    const text = await res.text();
-    // v_sz000001="51~平安银行~000001~11.89~...
-    const m = text.match(/="[^~]*~([^~]+)~(\d{6})~([^~]+)~([^~]+)~([^~]+)/);
-    if (!m) return null;
+    const q = await fetchTencentQuote(code);
+    if (!q) return null;
     return {
-      name: m[1],
-      code: m[2],
-      price: Number(m[3]) || 0,
-      changePct: 0, // 后面用K线补
-      prevClose: Number(m[4]) || 0,
+      name: q.name,
+      code: q.code,
+      price: q.price,
+      changePct: q.changePct,
+      prevClose: q.prevClose,
     };
   } catch {
     return null;

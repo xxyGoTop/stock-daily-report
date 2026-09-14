@@ -4,6 +4,7 @@
  */
 
 import { fetchStStocks, fetchKlines, toSecId } from '../crawl/eastmoney.js';
+import { cleanStockName, readResponseText } from '../crawl/decode.js';
 import { fetchTurnaroundAnnouncements } from '../crawl/cninfo.js';
 import {
   inferProgress,
@@ -33,12 +34,12 @@ async function fetchLiveNames(codes = []) {
           },
         }
       );
-      let t = await res.text();
+      let t = await readResponseText(res);
       const m = t.match(/^[a-zA-Z0-9_]+\((.*)\)\s*$/s);
       if (m) t = m[1];
       const data = JSON.parse(t);
       for (const item of data?.data?.diff || []) {
-        map.set(String(item.f12).padStart(6, '0'), String(item.f14 || ''));
+        map.set(String(item.f12).padStart(6, '0'), cleanStockName(item.f14));
       }
     } catch {
       /* ignore */

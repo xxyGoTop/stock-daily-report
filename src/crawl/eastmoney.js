@@ -3,6 +3,8 @@
  * 公告关键词检索见 cninfo.js（巨潮更稳）
  */
 
+import { cleanStockName, readResponseText } from './decode.js';
+
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
@@ -30,7 +32,7 @@ async function fetchJson(url, { retries = 3, delay = 400, referer } = {}) {
         },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status} ${url}`);
-      const text = await res.text();
+      const text = await readResponseText(res);
       // 部分接口可能带 JSONP 包裹
       const cleaned = text.replace(/^[a-zA-Z0-9_]+\(/, '').replace(/\);?\s*$/, '');
       return JSON.parse(cleaned);
@@ -107,7 +109,7 @@ export async function fetchActiveStocks({ pages = 8, pageSize = 100 } = {}) {
     if (!list.length) break;
     for (const item of list) {
       const code = String(item.f12);
-      const name = String(item.f14 || '');
+      const name = cleanStockName(item.f14);
       // 过滤 ST、退市、债券、基金等非正股短线标的（短线策略用）
       if (!code || !name) continue;
       all.push({
@@ -159,7 +161,7 @@ export async function fetchStStocks({ pages = 8, pageSize = 100 } = {}) {
         const list = data?.data?.diff || [];
         if (!list.length) break;
         for (const item of list) {
-          const name = String(item.f14 || '');
+          const name = cleanStockName(item.f14);
           if (!/ST/i.test(name)) continue;
           const code = String(item.f12);
           if (/^(200|900)/.test(code)) continue;
@@ -213,7 +215,7 @@ export async function fetchMarketReturns({ maxPages = 70 } = {}) {
     if (!list.length) break;
     for (const item of list) {
       const code = String(item.f12 || '');
-      const name = String(item.f14 || '');
+      const name = cleanStockName(item.f14);
       if (!code || !name || /ST/i.test(name)) continue;
       rows.push({
         code,
@@ -261,7 +263,7 @@ export async function fetchIndexRealtime(items = []) {
         changePct: num(x.f3),
         volume: num(x.f5),
         amount: num(x.f6),
-        liveName: String(x.f14 || '').trim(),
+        liveName: cleanStockName(x.f14),
       },
     ])
   );
@@ -349,7 +351,7 @@ async function fetchPool(kind, date, { pagesize = 200 } = {}) {
 function mapZtRow(x) {
   return {
     code: String(x.c || ''),
-    name: String(x.n || '').replace(/\s+/g, ''),
+    name: cleanStockName(x.n),
     price: num(x.p) / 1000,
     changePct: num(x.zdp),
     amount: num(x.amount),
@@ -369,7 +371,7 @@ function mapZtRow(x) {
 function mapPlainRow(x) {
   return {
     code: String(x.c || ''),
-    name: String(x.n || '').replace(/\s+/g, ''),
+    name: cleanStockName(x.n),
     price: num(x.p) / 1000,
     changePct: num(x.zdp),
     amount: num(x.amount),
@@ -478,7 +480,7 @@ export async function fetchBoardMembers(boardCode, { limit = 40 } = {}) {
   return list
     .map((x) => ({
       code: String(x.f12 || '').padStart(6, '0'),
-      name: String(x.f14 || '').replace(/\s+/g, ''),
+      name: cleanStockName(x.f14),
       market: num(x.f13) === 1 ? 'sh' : 'sz',
       price: num(x.f2),
       changePct: num(x.f3),

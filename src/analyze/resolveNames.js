@@ -3,6 +3,7 @@
  * 优先：当日筛选报告 → 腾讯联想 → 东财联想
  */
 
+import { readResponseText } from '../crawl/decode.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -63,7 +64,7 @@ function parseTokens(input) {
 async function suggestGtimg(keyword) {
   const url = `https://smartbox.gtimg.cn/s3/?v=2&q=${encodeURIComponent(keyword)}&t=gp`;
   const res = await fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://gu.qq.com/' } });
-  const text = await res.text();
+  const text = await readResponseText(res);
   const m = text.match(/="([^"]*)"/);
   if (!m || !m[1]) return [];
   // 腾讯返回 \uXXXX 转义
@@ -92,13 +93,7 @@ async function suggestSina(keyword) {
   const url =
     'https://suggest3.sinajs.cn/suggest/type=11,12,13,14,15&key=' + encodeURIComponent(keyword);
   const res = await fetch(url, { headers: { 'User-Agent': UA, Referer: 'https://finance.sina.com.cn' } });
-  const buf = await res.arrayBuffer();
-  let text;
-  try {
-    text = new TextDecoder('gbk').decode(buf);
-  } catch {
-    text = Buffer.from(buf).toString('latin1');
-  }
+  const text = await readResponseText(res);
   // var suggestvalue="远东股份,11,600869,sh600869,..."
   const m = text.match(/="([^"]*)"/);
   if (!m || !m[1]) return [];

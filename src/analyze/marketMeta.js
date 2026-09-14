@@ -3,6 +3,7 @@
  */
 
 import { toSecId } from '../crawl/eastmoney.js';
+import { readResponseText } from '../crawl/decode.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -24,7 +25,7 @@ async function fetchJson(url) {
     },
   });
   if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  let t = await res.text();
+  let t = await readResponseText(res);
   const m = t.match(/^[a-zA-Z0-9_]+\((.*)\)\s*$/s);
   if (m) t = m[1];
   return JSON.parse(t);

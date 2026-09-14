@@ -236,6 +236,8 @@ src/
   review.js             入口：当日复盘报告（HTML）
   crawl/
     eastmoney.js        行情 / K线 / 股票列表 / 板块快照
+    decode.js           按响应头解码（腾讯/新浪 GBK）
+    tencent.js          腾讯行情补名称
     cninfo.js           巨潮公告关键词检索
     hotNews.js          今日热点新闻
     xueqiu.js           雪球大V（Playwright 手动登录）

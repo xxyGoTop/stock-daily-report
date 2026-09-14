@@ -2,6 +2,8 @@
  * 巨潮资讯公告检索（摘帽 / 重整 / 股权转让）
  */
 
+import { cleanStockName } from './decode.js';
+
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
 
@@ -47,7 +49,7 @@ async function queryCninfo({
 
 function normalizeAnn(a, matchedKeyword) {
   const code = String(a.secCode || '').trim();
-  const name = String(a.secName || '').trim();
+  const name = cleanStockName(a.secName);
   const title = String(a.announcementTitle || '')
     .replace(/<[^>]+>/g, '')
     .trim();
