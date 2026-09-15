@@ -18,7 +18,9 @@
     "boards": "node src/boards.js",
     "板块": "node src/boards.js",
     "review": "node src/review.js",
-    "复盘": "node src/review.js"
+    "复盘": "node src/review.js",
+    "morning": "node src/morning.js",
+    "早盘": "node src/morning.js"
   },
   "engines": {
     "node": ">=18"

@@ -45,6 +45,7 @@ npm start
 | `npm run tail` | **尾盘选股**：今天尾盘能买哪些、买入点、买入理由（HTML） |
 | `npm run boards` | **板块强度**：市场风格 + 量能 + 前十强度板块 + 各板块龙头股（HTML） |
 | `npm run review` | **当日复盘**：情绪打分 + 连板梯队 + 今日主线 + 明日关注（HTML） |
+| `npm run morning` | **早盘竞价**：9:30 前热点板块 + 竞价选股（HTML） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -126,6 +127,29 @@ npm run boards -- --no-open   # 不自动打开浏览器
 举例：通信线缆板块里中天科技成交额 89.8 亿远大于神宇股份的 6.1 亿，但神宇股份 20cm 涨停，最终龙头判给神宇股份——打板资金认的是涨停那只。
 
 结果在 `output/<日期>/latest-boards.html`（快捷入口 `output/latest-boards.html`）。
+
+### 早盘竞价 `npm run morning`
+
+只分析 **9:30 开盘前的集合竞价**：今天资金在抢哪些板块、开盘能不能跟。和 `boards` 的区别是——9:30 前板块指数经常还停在昨收，所以热点是从高开个股自下而上聚出来的。
+
+```bash
+npm run morning                 # 热点板块 + 竞价选股，弹出 HTML
+npm run 早盘                    # 同上
+npm run morning -- --max=8      # 最多 8 只
+npm run morning -- --no-ma5     # 跳过五日线核对（更快）
+npm run morning -- --no-open    # 不自动打开浏览器
+```
+
+窗口：
+
+- **9:15–9:20** 可撤单，竞价额通常还没出来，只定板块方向
+- **9:20–9:25** 不可撤，虚拟匹配价还在跳
+- **9:25–9:30** 开盘价锁定，这是做计划的窗口
+- **9:30 之后** 仍可跑，按开盘价回看竞价；成交额已混进连续竞价，只作回顾
+
+选股规则：板块共振优先，高开但还没顶死，有竞价额更好，再核对是否站上向上五日线。一字/顶板默认不追；没有跟风的孤立高开直接回避。
+
+结果在 `output/<日期>/latest-morning.html`（快捷入口 `output/latest-morning.html`）。
 
 ### 当日复盘 `npm run review`
 
@@ -223,6 +247,7 @@ output/
     latest-tail.*    尾盘选股（HTML / 文本 / JSON）
     latest-boards.*  板块强度
     latest-review.*  当日复盘
+    latest-morning.* 早盘竞价
   latest.html        最近一次运行的快捷入口
 ```
 
@@ -234,6 +259,7 @@ src/
   tail.js               入口：尾盘选股命令
   boards.js             入口：当日板块强度统计（HTML）
   review.js             入口：当日复盘报告（HTML）
+  morning.js            入口：早盘热点 + 集合竞价选股（HTML）
   crawl/
     eastmoney.js        行情 / K线 / 股票列表 / 板块快照
     decode.js           按响应头解码（腾讯/新浪 GBK）
@@ -259,6 +285,7 @@ src/
     boardLeaders.js     板块龙头股：成分股多因子评分
     marketStyle.js      市场风格（大小盘、成长价值）+ 两市量能
     review.js           当日复盘：情绪打分 / 连板梯队 / 主线 / 明日关注
+    morning.js          早盘：竞价高开聚板块 + 开盘选股
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
   output/
@@ -266,6 +293,7 @@ src/
     boardHtml.js        板块强度 HTML
     tailHtml.js         尾盘选股 HTML
     reviewHtml.js       当日复盘 HTML
+    morningHtml.js      早盘竞价 HTML
     open.js             调用系统默认浏览器打开报告
   journal/              交易台账（本地网页 + 统计）
 ```

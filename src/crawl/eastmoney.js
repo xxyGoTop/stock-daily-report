@@ -141,6 +141,76 @@ export async function fetchActiveStocks({ pages = 8, pageSize = 100 } = {}) {
   return all;
 }
 
+/**
+ * 集合竞价 / 开盘快照
+ *
+ * 9:15–9:25：f2/f3 是虚拟匹配价和竞价涨幅，f5/f6 常常还是空的。
+ * 9:25 之后：f17 锁定为开盘价，f6 在 9:30 前可视为竞价额。
+ * 按涨幅翻页，北交所 30cm 会把主板热点淹没，默认排除。
+ */
+export async function fetchAuctionStocks({ pages = 8, pageSize = 80 } = {}) {
+  const fields =
+    'f12,f13,f14,f2,f3,f5,f6,f8,f10,f17,f18,f20,f21,f100';
+  const fs = 'm:0+t:6,m:0+t:80,m:1+t:2,m:1+t:23';
+  const all = [];
+  let hasAmount = false;
+
+  for (let pn = 1; pn <= pages; pn++) {
+    const query =
+      `pn=${pn}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f3` +
+      `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
+    let list = [];
+    try {
+      const data = await fetchClist(query);
+      list = data?.data?.diff || [];
+    } catch {
+      break;
+    }
+    if (!list.length) break;
+    for (const item of list) {
+      const code = String(item.f12 || '').padStart(6, '0');
+      const name = cleanStockName(item.f14);
+      if (!code || !name) continue;
+      if (/^(4|8|92)/.test(code)) continue;
+      if (/ST|退/i.test(name) || /^[NC]/.test(name)) continue;
+      const prevClose = num(item.f18);
+      const last = num(item.f2);
+      const open = num(item.f17);
+      const price = open || last;
+      // 9:25 后用开盘价算竞价涨幅；9:30 后 f3 已是连续竞价涨幅，不能再用
+      const auctionChange =
+        prevClose && open ? ((open - prevClose) / prevClose) * 100 : null;
+      const changePct =
+        auctionChange ??
+        num(item.f3) ??
+        (prevClose && last ? ((last - prevClose) / prevClose) * 100 : null);
+      const amount = num(item.f6);
+      if (amount > 0) hasAmount = true;
+      all.push({
+        code,
+        market: item.f13,
+        name,
+        price,
+        last,
+        open,
+        prevClose,
+        changePct,
+        volume: num(item.f5),
+        amount,
+        turnover: num(item.f8),
+        volumeRatio: num(item.f10),
+        totalMV: num(item.f20),
+        circMV: num(item.f21),
+        industry: String(item.f100 || '').trim() || '未分类',
+      });
+    }
+    const lastChg = num(list[list.length - 1]?.f3);
+    if (lastChg != null && lastChg < 0.3) break;
+    await sleep(150);
+  }
+  return { stocks: all, hasAmount, scanned: all.length };
+}
+
 /** ST / *ST 列表（风险警示板 + 全市场名称过滤） */
 export async function fetchStStocks({ pages = 8, pageSize = 100 } = {}) {
   const fields = 'f12,f13,f14,f2,f3,f8,f10,f6,f20,f62,f100,f102,f184';

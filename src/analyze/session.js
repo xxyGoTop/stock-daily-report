@@ -7,6 +7,9 @@
 
 import dayjs from 'dayjs';
 
+const AUCTION_START = 9 * 60 + 15;
+const AUCTION_LOCK = 9 * 60 + 20;
+const AUCTION_END = 9 * 60 + 25;
 const OPEN1 = 9 * 60 + 30;
 const CLOSE1 = 11 * 60 + 30;
 const OPEN2 = 13 * 60;
@@ -29,19 +32,39 @@ export function sessionPhase(now = dayjs()) {
       elapsed: SESSION_MINUTES,
       ratio: 1,
       isTail: false,
+      isAuction: false,
       live: false,
       note: '非交易日，以下按最近一个交易日收盘数据演练',
     };
   }
-  if (mins < OPEN1) {
+  if (mins < AUCTION_START) {
     return {
       phase: 'pre',
       label: '未开盘',
       elapsed: 0,
       ratio: 0,
       isTail: false,
+      isAuction: false,
       live: false,
-      note: '尚未开盘，当日量能未知，以下按上一交易日收盘数据演练',
+      note: '集合竞价 9:15 才开始，此时没有当日竞价数据，以下按上一交易日收盘演练',
+    };
+  }
+  if (mins < OPEN1) {
+    const locked = mins >= AUCTION_LOCK;
+    const matched = mins >= AUCTION_END;
+    return {
+      phase: matched ? 'auction_done' : locked ? 'auction_lock' : 'auction',
+      label: matched ? '竞价结束待开盘' : locked ? '集合竞价(不可撤)' : '集合竞价(可撤单)',
+      elapsed: 0,
+      ratio: 0,
+      isTail: false,
+      isAuction: true,
+      live: true,
+      note: matched
+        ? '9:25 已撮合，开盘价锁定，9:30 前可按竞价结果做早盘计划'
+        : locked
+          ? '9:20–9:25 不可撤单，虚拟匹配价还在跳，以板块共振为主、不要追单票'
+          : '9:15–9:20 可撤单，竞价额通常还没出来，先看高开分布和板块聚集',
     };
   }
   if (mins < CLOSE1) {
@@ -52,6 +75,7 @@ export function sessionPhase(now = dayjs()) {
       elapsed,
       ratio: elapsed / SESSION_MINUTES,
       isTail: false,
+      isAuction: false,
       live: true,
       note: `距尾盘还有约 ${CLOSE2 - mins} 分钟，量能已按当前进度折算，午后可能明显变化`,
     };
@@ -149,8 +173,8 @@ export function assessDataFreshness({ klineDate, quoteDate, baselineDate, now = 
     };
   }
 
-  // 未开盘或非交易日，指标本来就该是上一交易日的，不算异常
-  if (phase.phase === 'pre' || phase.phase === 'weekend') {
+  // 未开盘、集合竞价或非交易日，指标本来就该是上一交易日的，不算异常
+  if (phase.phase === 'pre' || phase.phase === 'weekend' || phase.isAuction) {
     return {
       ...base,
       level: 'expected',
