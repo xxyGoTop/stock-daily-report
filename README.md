@@ -46,6 +46,7 @@ npm start
 | `npm run boards` | **板块强度**：市场风格 + 量能 + 前十强度板块 + 各板块龙头股（HTML） |
 | `npm run review` | **当日复盘**：情绪打分 + 连板梯队 + 今日主线 + 明日关注（HTML） |
 | `npm run morning` | **早盘竞价**：9:30 前热点板块 + 竞价选股（HTML） |
+| `npm run seal -- 有研新材` | **封单监控**：涨停买一还厚不厚，能不能继续拿（HTML） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -151,6 +152,23 @@ npm run morning -- --no-open    # 不自动打开浏览器
 
 结果在 `output/<日期>/latest-morning.html`（快捷入口 `output/latest-morning.html`）。
 
+### 封单监控 `npm run seal`
+
+盯一只（或几只）涨停股的**买一封单**：还厚不厚、开过几次板、能不能拿到收盘。没封板就改看买一/卖一和五日线，不会硬套打板语言。
+
+```bash
+npm run seal -- 有研新材
+npm run 封单 -- 有研新材 600206
+npm run seal -- 有研新材 --watch              # 默认 15 秒刷新
+npm run seal -- 有研新材 --watch --interval=10
+npm run seal -- 有研新材 --no-open
+```
+
+涨停时看：封单金额、封单/成交、是否开过板、首封时间、涨停价还有没有卖一。  
+结论分四档：继续持有 / 继续持有·盯封单 / 减仓防炸板 / 不建议继续拿。
+
+结果在 `output/<日期>/latest-seal.html`（快捷入口 `output/latest-seal.html`）。
+
 ### 当日复盘 `npm run review`
 
 收盘后跑一次，回答「今天发生了什么、明天该盯什么」。只统计事实与归纳倾向，**不给个股买卖价**——买点仍然用 `npm run tail` / `npm run stock`。
@@ -248,6 +266,7 @@ output/
     latest-boards.*  板块强度
     latest-review.*  当日复盘
     latest-morning.* 早盘竞价
+    latest-seal.*    封单监控
   latest.html        最近一次运行的快捷入口
 ```
 
@@ -260,6 +279,7 @@ src/
   boards.js             入口：当日板块强度统计（HTML）
   review.js             入口：当日复盘报告（HTML）
   morning.js            入口：早盘热点 + 集合竞价选股（HTML）
+  seal.js               入口：涨停封单监控（HTML）
   crawl/
     eastmoney.js        行情 / K线 / 股票列表 / 板块快照
     decode.js           按响应头解码（腾讯/新浪 GBK）
@@ -286,6 +306,7 @@ src/
     marketStyle.js      市场风格（大小盘、成长价值）+ 两市量能
     review.js           当日复盘：情绪打分 / 连板梯队 / 主线 / 明日关注
     morning.js          早盘：竞价高开聚板块 + 开盘选股
+    seal.js             涨停封单：买一厚度 + 能否继续持有
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
   output/
@@ -294,6 +315,7 @@ src/
     tailHtml.js         尾盘选股 HTML
     reviewHtml.js       当日复盘 HTML
     morningHtml.js      早盘竞价 HTML
+    sealHtml.js         封单监控 HTML
     open.js             调用系统默认浏览器打开报告
   journal/              交易台账（本地网页 + 统计）
 ```

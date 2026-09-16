@@ -20,7 +20,9 @@
     "review": "node src/review.js",
     "复盘": "node src/review.js",
     "morning": "node src/morning.js",
-    "早盘": "node src/morning.js"
+    "早盘": "node src/morning.js",
+    "seal": "node src/seal.js",
+    "封单": "node src/seal.js"
   },
   "engines": {
     "node": ">=18"
