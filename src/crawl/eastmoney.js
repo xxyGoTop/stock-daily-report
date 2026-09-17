@@ -348,6 +348,68 @@ export async function fetchIndexRealtime(items = []) {
 }
 
 /**
+ * 按代码批量拉个股快照（不走成交额排行，自选 / ST / 冷门也能命中）
+ */
+export async function fetchStockSnapshots(codes = []) {
+  const uniq = [
+    ...new Set(
+      (Array.isArray(codes) ? codes : [codes])
+        .map((c) => String(c || '').padStart(6, '0'))
+        .filter((c) => /^\d{6}$/.test(c))
+    ),
+  ];
+  if (!uniq.length) return [];
+
+  const fields =
+    'f12,f13,f14,f2,f3,f5,f6,f7,f8,f10,f15,f16,f17,f18,f20,f21,f62,f100,f102,f184';
+  const secids = uniq.map((c) => toSecId(c)).join(',');
+  const query =
+    `fltt=2&invt=2&fields=${encodeURIComponent(fields)}` +
+    `&secids=${encodeURIComponent(secids)}`;
+
+  let list = [];
+  for (const host of CLIST_HOSTS) {
+    try {
+      const data = await fetchJson(`${host}/api/qt/ulist.np/get?${query}`, { retries: 2 });
+      list = data?.data?.diff || [];
+      if (list.length) break;
+    } catch {
+      /* next host */
+    }
+  }
+
+  return list
+    .map((item) => {
+      const code = String(item.f12 || '').padStart(6, '0');
+      const name = cleanStockName(item.f14);
+      if (!code || !name) return null;
+      return {
+        code,
+        market: item.f13,
+        name,
+        price: num(item.f2),
+        changePct: num(item.f3),
+        volume: num(item.f5),
+        amount: num(item.f6),
+        amplitude: num(item.f7),
+        turnover: num(item.f8),
+        volumeRatio: num(item.f10),
+        high: num(item.f15),
+        low: num(item.f16),
+        open: num(item.f17),
+        prevClose: num(item.f18),
+        totalMV: num(item.f20),
+        circMV: num(item.f21),
+        mainNetInflow: num(item.f62),
+        mainNetInflowPct: num(item.f184),
+        industry: String(item.f100 || '').trim(),
+        region: String(item.f102 || '').trim(),
+      };
+    })
+    .filter(Boolean);
+}
+
+/**
  * 全市场涨跌家数
  *
  * 不逐页扫 5000 只股票：沪深两条综合指数的 f104/f105/f106 就是交易所口径的

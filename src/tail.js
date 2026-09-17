@@ -5,6 +5,8 @@
  * 用法：
  *   npm run tail
  *   npm run 尾盘
+ *   npm run tail -- 有研新材 600519
+ *   npm run tail -- --only 有研新材
  *   npm run tail -- --max=8 --fast
  *   npm run tail -- --no-open   只出文件，不弹浏览器
  */
@@ -15,6 +17,7 @@ import { fileURLToPath } from 'node:url';
 import dayjs from 'dayjs';
 
 import { screenTailEnd } from './analyze/tailEnd.js';
+import { resolveStockTokens } from './analyze/resolveNames.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { renderTailHtml, saveTailHtml } from './output/tailHtml.js';
 import { openInBrowser } from './output/open.js';
@@ -23,19 +26,34 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
-  const args = { max: 10, fast: false, detailLimit: null, noMarket: false, noOpen: false };
+  const args = {
+    max: 10,
+    fast: false,
+    detailLimit: null,
+    noMarket: false,
+    noOpen: false,
+    only: false,
+    tokens: [],
+  };
   for (const a of argv) {
     if (a === '--fast') args.fast = true;
     else if (a === '--no-market') args.noMarket = true;
     else if (a === '--no-open') args.noOpen = true;
+    else if (a === '--only') args.only = true;
     else if (a.startsWith('--max=')) {
       args.max = Math.min(30, Math.max(1, Number(a.slice(6)) || 10));
     } else if (a.startsWith('--pool=')) {
       args.detailLimit = Math.min(300, Math.max(20, Number(a.slice(7)) || 80));
     } else if (a === '-h' || a === '--help') {
       args.help = true;
+    } else if (!a.startsWith('-')) {
+      args.tokens.push(a);
     }
   }
+  args.tokens = args.tokens
+    .flatMap((s) => String(s || '').split(/[\s,，;；|、]+/))
+    .map((s) => s.trim())
+    .filter(Boolean);
   return args;
 }
 
@@ -144,26 +162,58 @@ function render(result) {
     p('');
   }
 
-  p(line('═'));
-  p(`【尾盘可买】${candidates.length} 只`);
-  p(line('═'));
-  p(
-    `筛选漏斗：全市场 ${result.scanned} → 快照预筛 ${result.prescreened} → 细算 ${result.detailed} → 通过 ${result.passedCount} → 可买 ${candidates.length}`
-  );
-  p('');
-
-  if (!candidates.length) {
-    p('  今天尾盘没有符合条件、且当前价位就能买的标的。');
-    const stats = Object.entries(result.rejectStats || {}).sort((a, b) => b[1] - a[1]);
-    if (stats.length) {
-      p('  主要落选原因：');
-      for (const [reason, n] of stats.slice(0, 6)) p(`    · ${reason}：${n} 只`);
+  const customList = result.customList || [];
+  const unresolved = result.unresolved || [];
+  if (customList.length || unresolved.length) {
+    p(line('═'));
+    p(`【自选尾盘评估】${customList.length} 只 · 不走全市场预筛，按同一套尾盘规则给结论`);
+    p(line('═'));
+    for (const token of unresolved) {
+      p(`  ! 无法识别「${token}」，已跳过（可直接给6位代码）`);
     }
-    p('  空仓也是一种决策，不必勉强出手。');
-    p('');
+    customList.forEach((c, i) => {
+      p(`${String(i + 1).padStart(2, '0')}. ${c.code} ${c.name}  ${c.industry || ''}  [${c.action}]`);
+      p(`    现价 ${fmtPrice(c.price)} ${fmtPct(c.changePct)}  得分 ${c.score || 0}`);
+      if (c.ma5Text) p(`    ─ 五日线：${c.ma5Text}`);
+      if (c.volumeText) p(`    ─ ${c.volumeText}`);
+      if (c.dayPosText) p(`    ─ ${c.dayPosText}`);
+      if (c.passed) {
+        p(`    ▸ 买入点：${c.buyPrice}`);
+        p(`    ▸ 止损/止盈：${c.sellPrice}`);
+        p(`    ▸ 建议仓位：${c.positionPct}（${c.positionNote}）`);
+        p(`    ▸ 操作说明：${c.buyReason}`);
+      } else {
+        p(`    ▸ 结论：${c.buyPrice || c.action}`);
+        p(`    ▸ 为何不买：${c.rejectReason || c.buyReason || '-'}`);
+        if (c.ma5) {
+          p(`    ▸ 若回踩到位：可在 ${fmtPrice(c.ma5)} 附近再评估`);
+        }
+      }
+      p('');
+    });
   }
 
-  candidates.forEach((c, i) => {
+  if (!(result.customOnly && !candidates.length)) {
+    p(line('═'));
+    p(`【尾盘可买】${candidates.length} 只`);
+    p(line('═'));
+    p(
+      `筛选漏斗：全市场 ${result.scanned} → 快照预筛 ${result.prescreened} → 细算 ${result.detailed} → 通过 ${result.passedCount} → 可买 ${candidates.length}`
+    );
+    p('');
+
+    if (!candidates.length) {
+      p('  今天尾盘没有符合条件、且当前价位就能买的标的。');
+      const stats = Object.entries(result.rejectStats || {}).sort((a, b) => b[1] - a[1]);
+      if (stats.length) {
+        p('  主要落选原因：');
+        for (const [reason, n] of stats.slice(0, 6)) p(`    · ${reason}：${n} 只`);
+      }
+      p('  空仓也是一种决策，不必勉强出手。');
+      p('');
+    }
+
+    candidates.forEach((c, i) => {
     p(`${String(i + 1).padStart(2, '0')}. ${c.code} ${c.name}  ${c.industry}  [得分 ${c.score}]`);
     p(`    现价 ${fmtPrice(c.price)} ${fmtPct(c.changePct)}  日内 ${fmtPrice(c.low)}~${fmtPrice(c.high)}`);
     p(`    ▸ 买入点：${c.buyPrice}`);
@@ -196,6 +246,7 @@ function render(result) {
     p(`    ▸ 离场纪律：${c.sellReason}`);
     p('');
   });
+  }
 
   const watch = result.watchList || [];
   if (watch.length) {
@@ -232,13 +283,18 @@ async function main() {
   const args = parseArgs(process.argv.slice(2));
   if (args.help) {
     console.log(`用法：
-  npm run tail                 尾盘选股（默认10只）
-  npm run 尾盘                 同上
-  npm run tail -- --max=8      最多输出8只
-  npm run tail -- --fast       快速模式（少扫一些）
-  npm run tail -- --pool=120   细算的候选池大小
-  npm run tail -- --no-market  跳过大盘分析（更快）
-  npm run tail -- --no-open    不自动打开 HTML
+  npm run tail                      尾盘选股（默认10只）
+  npm run 尾盘                      同上
+  npm run tail -- 有研新材 600519   市场扫描 + 强制评估自选
+  npm run tail -- --only 有研新材   只评估自选，跳过全市场
+  npm run tail -- --max=8           最多输出8只
+  npm run tail -- --fast            快速模式（少扫一些）
+  npm run tail -- --pool=120        细算的候选池大小
+  npm run tail -- --no-market       跳过大盘分析（更快）
+  npm run tail -- --no-open         不自动打开 HTML
+
+自选股写法与 npm run stock / npm run note 相同：中文名、简称或6位代码，空格/逗号都行。
+自选会跳过成交额预筛，即使 ST、冷门也会出结论（可买 / 观察 / 不买+原因）。
 
 依据：当日成交量（盘中按已过交易时间折算）、大盘指数中期信号、五日线状态。
 输出：HTML/文本/JSON 三份，含尾盘买入点、止损止盈、建议仓位、买入理由。`);
@@ -248,6 +304,26 @@ async function main() {
   const now = dayjs();
   const progress = (m) => console.log(`  · ${m}`);
   console.log('\n[尾盘选股] 开始...');
+
+  const customStocks = [];
+  const unresolved = [];
+  if (args.tokens.length) {
+    progress(`解析自选：${args.tokens.join('、')}`);
+    const { results } = await resolveStockTokens(args.tokens);
+    for (const r of results) {
+      if (r.code) {
+        customStocks.push({ code: r.code, name: r.name, token: r.token });
+        progress(`  ${r.token} → ${r.code} ${r.name}`);
+      } else {
+        unresolved.push(r.token);
+        console.log(`  ! 无法识别「${r.token}」，已跳过（可直接给6位代码）`);
+      }
+    }
+  }
+  if (args.only && !customStocks.length) {
+    console.error('失败：--only 需要至少一只可识别的自选股。用法：npm run tail -- --only 有研新材');
+    process.exit(1);
+  }
 
   let market = null;
   if (!args.noMarket) {
@@ -260,6 +336,9 @@ async function main() {
     detailLimit: args.detailLimit ?? (args.fast ? 50 : 80),
     scanPages: args.fast ? 4 : 6,
     market,
+    customStocks,
+    customOnly: args.only,
+    unresolved,
     onProgress: progress,
     now,
   });

@@ -11,12 +11,14 @@ import dayjs from 'dayjs';
 import {
   fetchActiveStocks,
   fetchKlines,
+  fetchStockSnapshots,
   fetchTailBoardSignals,
   getDataFreshness,
 } from '../crawl/eastmoney.js';
+import { fetchTencentDepth } from '../crawl/tencent.js';
 import { computeIndicators } from './indicators.js';
 import { buildSignalBoard } from './modules.js';
-import { describeFundFlow, estimateChipConcentration } from './marketMeta.js';
+import { describeFundFlow, estimateChipConcentration, fetchStockIndustry } from './marketMeta.js';
 import { sessionPhase, assessDataFreshness } from './session.js';
 
 export { sessionPhase };
@@ -422,6 +424,55 @@ function scoreTail(ctx) {
   return { score: Math.max(0, Math.min(100, Math.round(score))), veto };
 }
 
+function normalizeCustomStocks(input = []) {
+  const seen = new Set();
+  const list = [];
+  for (const item of input) {
+    const code = String(item?.code || item || '').padStart(6, '0');
+    if (!/^\d{6}$/.test(code) || seen.has(code)) continue;
+    seen.add(code);
+    list.push({
+      code,
+      name: String(item?.name || '').trim(),
+      token: String(item?.token || item?.name || code).trim(),
+    });
+  }
+  return list;
+}
+
+async function quoteFromTencent(code, fallbackName = '') {
+  try {
+    const q = await fetchTencentDepth(code);
+    if (!q?.price) return null;
+    let extra = { industry: '', mainNetInflow: 0, mainNetInflowPct: 0 };
+    try {
+      extra = await fetchStockIndustry(code);
+    } catch {
+      /* ignore */
+    }
+    return {
+      code,
+      name: q.name || fallbackName || code,
+      price: q.price,
+      changePct: q.changePct,
+      volume: q.volume,
+      amount: q.amount,
+      amplitude: q.amplitude,
+      turnover: q.turnover,
+      volumeRatio: q.volumeRatio,
+      high: q.high,
+      low: q.low,
+      open: q.open,
+      prevClose: q.prevClose,
+      mainNetInflow: extra.mainNetInflow || 0,
+      mainNetInflowPct: extra.mainNetInflowPct || 0,
+      industry: extra.industry || '',
+    };
+  } catch {
+    return null;
+  }
+}
+
 /**
  * 主流程
  */
@@ -431,6 +482,9 @@ export async function screenTailEnd({
   scanPages = 6,
   minAmount = 5e7,
   market = null,
+  customStocks = [],
+  customOnly = false,
+  unresolved = [],
   onProgress,
   now = dayjs(),
 } = {}) {
@@ -462,8 +516,45 @@ export async function screenTailEnd({
     onProgress?.('板块快照不可用，本次仅按个股信号筛选');
   }
 
-  onProgress?.('拉取全市场快照...');
-  const stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
+  const wanted = normalizeCustomStocks(customStocks);
+  const customSet = new Set(wanted.map((x) => x.code));
+  const customNameOf = new Map(wanted.map((x) => [x.code, x.name || x.token]));
+  const quoteByCode = new Map();
+
+  let stocks = [];
+  if (customOnly) {
+    onProgress?.(`仅评估自选 ${wanted.length} 只，跳过全市场扫描`);
+  } else {
+    onProgress?.('拉取全市场快照...');
+    stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
+    for (const s of stocks) quoteByCode.set(s.code, s);
+  }
+
+  const missingCodes = wanted.map((x) => x.code).filter((c) => !quoteByCode.has(c));
+  if (missingCodes.length) {
+    onProgress?.(`补行情：${missingCodes.join('、')}`);
+    try {
+      const snaps = await fetchStockSnapshots(missingCodes);
+      for (const s of snaps) quoteByCode.set(s.code, s);
+    } catch {
+      /* tencent fallback below */
+    }
+    for (const item of wanted) {
+      const hit = quoteByCode.get(item.code);
+      if (hit?.price > 0) {
+        if (item.name && (!hit.name || hit.name === item.code)) hit.name = item.name;
+        continue;
+      }
+      const q = await quoteFromTencent(item.code, item.name);
+      if (q) quoteByCode.set(item.code, q);
+      await sleep(80);
+    }
+  }
+
+  for (const item of wanted) {
+    const hit = quoteByCode.get(item.code);
+    if (hit && item.name && (!hit.name || hit.name === item.code)) hit.name = item.name;
+  }
 
   // 快照预筛：流动性 + 当日量能 + 日内位置，先把范围压到可接受的K线请求量
   const pre = [];
@@ -487,19 +578,45 @@ export async function screenTailEnd({
     // 预筛打分：量能 × 日内位置 × 温和涨幅
     const preScore =
       Math.min(vr, 4) * 20 + (dp.pos ?? 0.5) * 40 + Math.max(0, 6 - Math.abs(chg - 3)) * 3;
-    pre.push({ stock: s, dayPos: dp, preScore });
+    pre.push({ stock: s, dayPos: dp, preScore, custom: customSet.has(s.code) });
   }
 
   pre.sort((a, b) => b.preScore - a.preScore);
-  const pool = pre.slice(0, detailLimit);
-  onProgress?.(`快照 ${stocks.length} 只 → 预筛 ${pre.length} 只 → 细算前 ${pool.length} 只`);
+  const pool = customOnly ? [] : pre.slice(0, detailLimit);
+  const inPool = new Set(pool.map((p) => p.stock.code));
+  for (const item of wanted) {
+    const stock = quoteByCode.get(item.code);
+    if (!stock?.price) continue;
+    if (inPool.has(item.code)) {
+      const hit = pool.find((p) => p.stock.code === item.code);
+      if (hit) hit.custom = true;
+      continue;
+    }
+    pool.push({
+      stock,
+      dayPos: analyzeDayPosition(stock),
+      preScore: 9999,
+      custom: true,
+    });
+    inPool.add(item.code);
+  }
+  onProgress?.(
+    customOnly
+      ? `自选细算 ${pool.length} 只`
+      : `快照 ${stocks.length} 只 → 预筛 ${pre.length} 只 → 细算 ${pool.length} 只` +
+          (wanted.length ? `（含自选 ${wanted.length}）` : '')
+  );
 
   const rows = [];
   for (let i = 0; i < pool.length; i++) {
-    const { stock, dayPos } = pool[i];
+    const { stock, dayPos, custom } = pool[i];
+    const isCustom = !!custom || customSet.has(stock.code);
     try {
       const klines = await fetchKlines(stock.code, { limit: 120 });
-      if (klines.length < 30) continue;
+      if (klines.length < 30) {
+        if (isCustom) rows.push({ stock, dayPos, custom: true, error: 'K线不足30根，无法评估' });
+        continue;
+      }
       const ind = computeIndicators(klines);
       if (!stock.turnover) stock.turnover = ind.lastTurnover;
 
@@ -510,9 +627,9 @@ export async function screenTailEnd({
 
       // 五日线硬门槛：尾盘只买站上向上五日线的
       const ma5Ok = ind.aboveMa5 && ind.ma5Rising;
-      rows.push({ stock, ind, klines, vol, dayPos, score, veto, ma5Ok, ctx });
+      rows.push({ stock, ind, klines, vol, dayPos, score, veto, ma5Ok, ctx, custom: isCustom });
     } catch {
-      /* skip */
+      if (isCustom) rows.push({ stock, dayPos, custom: true, error: 'K线拉取失败' });
     }
     if (i % 10 === 9) onProgress?.(`已细算 ${i + 1}/${pool.length}`);
     await sleep(110);
@@ -527,6 +644,7 @@ export async function screenTailEnd({
     const advice = positionAdvice(market, r.score);
     const { buyReasons, riskNotes } = buildTailNarrative(r.ctx);
     return {
+      custom: !!r.custom,
       code: r.stock.code,
       name: r.stock.name,
       score: r.score,
@@ -587,6 +705,68 @@ export async function screenTailEnd({
     .filter((c) => c.entryMode === '不买')
     .slice(0, Math.max(5, Math.ceil(maxCandidates / 2)));
 
+  const toCustomCard = (r) => {
+    if (r.error || !r.ind) {
+      return {
+        custom: true,
+        passed: false,
+        code: r.stock.code,
+        name: r.stock.name || customNameOf.get(r.stock.code) || r.stock.code,
+        price: r.stock.price,
+        changePct: r.stock.changePct,
+        industry: r.stock.industry || '未知行业',
+        score: 0,
+        action: '无法评估',
+        buyPrice: '-',
+        rejectReason: r.error || '行情不足',
+        buyReason: r.error || '行情或K线不足，无法套用尾盘规则',
+        buyReasons: [],
+        riskNotes: [r.error || '行情不足'],
+      };
+    }
+    const card = toCard(r);
+    const hardFail = !r.ma5Ok || (r.veto && r.veto.length);
+    const rejectReason = hardFail
+      ? !r.ma5Ok
+        ? r.ind.aboveMa5
+          ? '五日线未向上'
+          : '未站上五日线'
+        : r.veto.join('；')
+      : card.entryMode === '不买'
+        ? card.buyReason
+        : '';
+    return {
+      ...card,
+      custom: true,
+      passed: !hardFail && card.entryMode !== '不买',
+      rejectReason,
+      action: hardFail ? '不买' : card.action,
+      buyPrice: hardFail ? `不买（${rejectReason}）` : card.buyPrice,
+    };
+  };
+
+  const rowByCode = new Map(rows.filter((r) => r.custom).map((r) => [r.stock.code, r]));
+  const customList = wanted.map((item) => {
+    const row = rowByCode.get(item.code);
+    if (row) return toCustomCard(row);
+    return {
+      custom: true,
+      passed: false,
+      code: item.code,
+      name: item.name || customNameOf.get(item.code) || item.code,
+      price: quoteByCode.get(item.code)?.price ?? null,
+      changePct: quoteByCode.get(item.code)?.changePct ?? null,
+      industry: quoteByCode.get(item.code)?.industry || '未知行业',
+      score: 0,
+      action: '无法评估',
+      buyPrice: '-',
+      rejectReason: '未取到行情',
+      buyReason: '东财/腾讯都没有拿到这只票的实时快照',
+      buyReasons: [],
+      riskNotes: ['未取到行情'],
+    };
+  });
+
   // 板块推荐只从已经通过个股硬门槛的尾盘候选/观察池中产生，不扩散推荐板块内其他股票。
   const boardRecommendations = allCards
     .filter((c) => c.boardSignal?.isMover || c.boardSignal?.isStrong)
@@ -611,6 +791,7 @@ export async function screenTailEnd({
   // 落选原因统计，方便判断是「市场没机会」还是「筛太严」
   const rejectStats = {};
   for (const r of rows) {
+    if (r.custom) continue;
     if (r.ma5Ok && !r.veto.length) continue;
     const key = !r.ma5Ok ? '未站上向上的五日线' : r.veto[0];
     rejectStats[key] = (rejectStats[key] || 0) + 1;
@@ -620,12 +801,15 @@ export async function screenTailEnd({
     phase,
     freshness,
     market,
+    customOnly,
     scanned: stocks.length,
     prescreened: pre.length,
     detailed: rows.length,
     passedCount: passed.length,
     candidates,
     watchList,
+    customList,
+    unresolved: unresolved.filter(Boolean),
     strongestBoards: boardSignals.strongestToday,
     tailMovingBoards: boardSignals.tailMovers,
     boardRecommendations,

@@ -56,6 +56,7 @@ function candidateCard(c, i) {
               <span class="pill soft">${esc(c.code)}</span>
               <span class="pill soft">${esc(c.industry)}</span>
               <span class="pill">得分 ${esc(c.score)}</span>
+              ${c.custom ? '<span class="pill">自选</span>' : ''}
             </div>
             <div class="quote">
               <b class="${pctClass(c.changePct)}">${fmtPrice(c.price)}</b>
@@ -205,6 +206,62 @@ function boardListSection(title, hint, list, emptyText) {
   </section>`;
 }
 
+function customSection(result) {
+  const list = result.customList || [];
+  const unresolved = result.unresolved || [];
+  if (!list.length && !unresolved.length) return '';
+
+  return `
+  <section class="section">
+    <div class="section-head">
+      <h2>自选尾盘评估 · ${list.length} 只</h2>
+      <div class="hint">跳过成交额预筛，用同一套五日线 / 量能 / 日内位置规则给出可买、观察或不买</div>
+    </div>
+    ${
+      unresolved.length
+        ? `<div class="muted">无法识别：${unresolved.map((t) => esc(t)).join('、')}</div>`
+        : ''
+    }
+    ${
+      list.length
+        ? `<div class="list">${list.map((c, i) => (c.passed ? candidateCard(c, i) : customFailCard(c, i))).join('')}</div>`
+        : ''
+    }
+  </section>`;
+}
+
+function customFailCard(c, i) {
+  const bt = boardText(c.boardSignal);
+  return `
+      <article class="row">
+        <div class="row-idx">${String(i + 1).padStart(2, '0')}</div>
+        <div class="row-main">
+          <div class="row-top">
+            <div class="name">
+              <strong>${esc(c.name)}</strong>
+              <span class="pill soft">${esc(c.code)}</span>
+              <span class="pill soft">${esc(c.industry || '')}</span>
+              <span class="pill">自选</span>
+            </div>
+            <div class="quote">
+              <b class="${pctClass(c.changePct)}">${fmtPrice(c.price)}</b>
+              <span class="${pctClass(c.changePct)}">${fmtPct(c.changePct)}</span>
+              <span class="tag ${actionClass(c.action)}">${esc(c.action)}</span>
+            </div>
+          </div>
+          <div class="metrics">
+            ${metric('为何不买', esc(c.rejectReason || c.buyReason || '-'), c.ma5Text || '')}
+            ${
+              c.ma5
+                ? metric('回踩后', `${fmtPrice(c.ma5)} 附近再评估`, c.volumeText || '')
+                : metric('量能', esc(c.volumeText || '-'), c.dayPosText || '')
+            }
+            ${bt ? metric('板块', esc(bt), '') : ''}
+          </div>
+        </div>
+      </article>`;
+}
+
 function recommendSection(list = []) {
   if (!list.length) return '';
   return `
@@ -235,6 +292,7 @@ function recommendSection(list = []) {
 function candidateSection(result) {
   const list = result.candidates || [];
   const stats = Object.entries(result.rejectStats || {}).sort((a, b) => b[1] - a[1]);
+  if (result.customOnly && !list.length) return '';
 
   return `
   <section class="section">
@@ -330,6 +388,7 @@ export function renderTailHtml(result) {
       '暂无可信的板块异动。'
     ),
     recommendSection(result.boardRecommendations),
+    customSection(result),
     candidateSection(result),
     watchSection(result.watchList),
     disciplineSection(),
