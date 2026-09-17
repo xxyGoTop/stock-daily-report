@@ -22,7 +22,9 @@
     "morning": "node src/morning.js",
     "早盘": "node src/morning.js",
     "seal": "node src/seal.js",
-    "封单": "node src/seal.js"
+    "封单": "node src/seal.js",
+    "pick": "node src/pick.js",
+    "选股": "node src/pick.js"
   },
   "engines": {
     "node": ">=18"
