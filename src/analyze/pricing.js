@@ -16,6 +16,21 @@ function biasToMa(price, ma) {
   return ((price - ma) / ma) * 100;
 }
 
+/** 买入后的止盈 / 盈利目标（先减半，再看余仓） */
+export function takeProfitFields({ sellStop, sellTarget1, sellTarget } = {}) {
+  const t1 = sellTarget1 != null && Number.isFinite(+sellTarget1) ? round2(+sellTarget1) : null;
+  const t2 = sellTarget != null && Number.isFinite(+sellTarget) ? round2(+sellTarget) : null;
+  return {
+    sellStop: sellStop != null && Number.isFinite(+sellStop) ? round2(+sellStop) : null,
+    sellTarget1: t1,
+    sellTarget: t2,
+    takeProfit: t1,
+    profitTarget: t2,
+    takeProfitText: t1 != null ? `${t1.toFixed(2)}（先减半）` : '',
+    profitTargetText: t2 != null ? `${t2.toFixed(2)}（余仓卖出）` : '',
+  };
+}
+
 /**
  * 短线（五日线策略）
  * 买：站稳 MA5 附近窄区间；卖：跌破 MA5 止损 + 分档止盈
@@ -122,6 +137,7 @@ export function shortTermPrices(stock, ind) {
     sellStop,
     sellTarget: t2,
     sellTarget1: t1,
+    ...takeProfitFields({ sellStop, sellTarget1: t1, sellTarget: t2 }),
     buyTrigger,
     entryMode,
     buyReason,
@@ -215,6 +231,7 @@ export function eventDrivenPrices(latest, quote, { isST = false, ind = null } = 
       sellReason: '设好最大亏损承受后再动手',
       buyPlan: '暂不定价',
       sellPlan: '暂不定价',
+      ...takeProfitFields({}),
       techEntry: tech.label,
       techEntryText: tech.text,
       techSuitable: tech.suitable,
@@ -285,6 +302,7 @@ export function eventDrivenPrices(latest, quote, { isST = false, ind = null } = 
     sellStop,
     sellTarget: t2,
     sellTarget1: t1,
+    ...takeProfitFields({ sellStop, sellTarget1: t1, sellTarget: t2 }),
     buyTrigger,
     entryMode,
     buyReason,

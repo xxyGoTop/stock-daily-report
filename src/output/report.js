@@ -21,6 +21,15 @@ function fmtPrice(v) {
   return (+v).toFixed(2);
 }
 
+function profitLine(c) {
+  const t1 = c.takeProfitText || (c.takeProfit != null ? fmtPrice(c.takeProfit) : c.sellTarget1 != null ? fmtPrice(c.sellTarget1) : '');
+  const t2 =
+    c.profitTargetText ||
+    (c.profitTarget != null ? fmtPrice(c.profitTarget) : c.sellTarget != null ? fmtPrice(c.sellTarget) : '');
+  if (!t1 && !t2) return '';
+  return `      止盈价：${t1 || '-'} ｜ 盈利卖出目标价：${t2 || '-'}`;
+}
+
 function printCard(p, c, i) {
   const sb = c.signalBoard || {};
   p(
@@ -37,7 +46,9 @@ function printCard(p, c, i) {
   if (c.themeExpect) p(`      ${c.themeExpect}`);
   if (c.moveReason) p(`      ${c.moveReason}`);
   p(`      操作：${c.action || '-'}`);
-  p(`      买入参考：${c.buyPrice || '-'} ｜ 卖出参考：${c.sellPrice || '-'}`);
+  p(`      买入参考：${c.buyPrice || '-'} ｜ 止损参考：${c.sellStop != null ? fmtPrice(c.sellStop) : c.sellPrice || '-'}`);
+  const profit = profitLine(c);
+  if (profit) p(profit);
   p(`      买入原因：${(c.buyReason || c.reason || '-').slice(0, 100)}`);
   p(`      卖出原因：${(c.sellReason || '-').slice(0, 100)}`);
   p(`      进展：${c.progress || '-'} ｜ 下一窗口：${c.expectWindow || '-'}`);
@@ -119,7 +130,9 @@ export function printReport({ modules, meta, turnaround, indexSignals, brief, sh
         p(`  ${e.code} ${e.name}  [${e.action || e.signal}]  价${fmtPrice(e.price)} ${fmtPct(e.changePct)}`);
         p(`      技术线：${e.techLine || '-'}`);
         p(`      买入：${e.buyPrice || '-'} ｜ ${e.buyReason || ''}`);
-        p(`      卖出：${e.sellPrice || '-'} ｜ ${e.sellReason || ''}`);
+        p(`      止损：${e.sellStop != null ? fmtPrice(e.sellStop) : e.sellPrice || '-'} ｜ ${e.sellReason || ''}`);
+        const ep = profitLine(e);
+        if (ep) p(ep);
       }
     }
     p('');

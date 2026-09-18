@@ -202,7 +202,8 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
         `   ${sb.biasText || ''}｜${sb.macdText || ''}\n` +
         `   ${c.themeExpect || ''}\n` +
         `   ${c.moveReason || ''}\n` +
-        `   买 ${c.buyPrice}｜卖 ${c.sellPrice}\n` +
+        `   买 ${c.buyPrice}｜止损 ${c.sellStop != null ? Number(c.sellStop).toFixed(2) : c.sellPrice}\n` +
+        `   止盈价 ${c.takeProfitText || '-'}｜目标价 ${c.profitTargetText || '-'}\n` +
         `   进展 ${c.progress}｜窗口 ${c.expectWindow}\n` +
         `   买因：${c.buyReason}\n   卖因：${c.sellReason}`
       );

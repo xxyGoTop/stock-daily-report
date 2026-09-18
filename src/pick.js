@@ -123,7 +123,7 @@ function printConsole({ tape, indexSignals, boards, result, freshness, limit }) 
     p(`    命中：${x.strategies.map((s) => s.short).join(' + ')}｜主策略：${x.primaryName}｜${x.industry}`);
     p(
       `    买入：${x.entry.buyLow}~${x.entry.buyHigh}（${x.entry.entryType}·${x.entry.entryMode}）` +
-        ` 止损 ${x.entry.stop}（空间${x.entry.riskPct}%）　目标 ${x.entry.target1}/${x.entry.target2}（盈亏比${x.entry.rr}）`
+        ` 止损 ${x.entry.stop}（空间${x.entry.riskPct}%）　止盈价 ${x.entry.target1}（先减半）　目标价 ${x.entry.target2}（余仓盈利卖出，盈亏比${x.entry.rr}）`
     );
     for (const r of x.buyReasons.slice(0, 3)) p(`    ${r}`);
     for (const r of x.riskNotes.slice(0, 2)) p(`    ! ${r}`);

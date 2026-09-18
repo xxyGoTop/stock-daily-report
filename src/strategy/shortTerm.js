@@ -10,7 +10,7 @@ import {
   fetchMarketReturns,
 } from '../crawl/eastmoney.js';
 import { computeIndicators } from '../analyze/indicators.js';
-import { shortTermPrices, eventDrivenPrices } from '../analyze/pricing.js';
+import { shortTermPrices, eventDrivenPrices, takeProfitFields } from '../analyze/pricing.js';
 import { inferProgress, listMajorEvents } from '../analyze/progress.js';
 import { buildSignalBoard } from '../analyze/modules.js';
 import {
@@ -211,6 +211,7 @@ function enrichTechCard(s, tag = '买入') {
     action,
     buyPrice: prices.buyPrice,
     sellPrice: prices.sellPrice,
+    ...takeProfitFields(prices),
     buyTrigger: prices.buyTrigger,
     entryMode: prices.entryMode,
     buyReason:
@@ -287,6 +288,7 @@ function enrichEventCard(row) {
     action,
     buyPrice: prices.buyPrice,
     sellPrice: prices.sellPrice,
+    ...takeProfitFields(prices),
     buyReason: `${progress.progressText}。${prices.buyReason}`,
     sellReason: prices.sellReason,
     techEntry: prices.techEntry,

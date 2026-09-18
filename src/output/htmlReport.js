@@ -90,6 +90,35 @@ function eventsHtml(events = []) {
     .join('');
 }
 
+function priceRowsHtml(c) {
+  const stopVal =
+    c.sellStop != null && Number.isFinite(+c.sellStop) ? fmtPrice(c.sellStop) : c.sellPrice || '-';
+  const t1 =
+    c.takeProfitText ||
+    (c.takeProfit != null ? `${fmtPrice(c.takeProfit)}（先减半）` : c.sellTarget1 != null ? `${fmtPrice(c.sellTarget1)}（先减半）` : '');
+  const t2 =
+    c.profitTargetText ||
+    (c.profitTarget != null
+      ? `${fmtPrice(c.profitTarget)}（余仓卖出）`
+      : c.sellTarget != null
+        ? `${fmtPrice(c.sellTarget)}（余仓卖出）`
+        : '');
+  return `<div class="row-prices">
+        <div class="p buy"><span>买</span><b>${esc(c.buyPrice || '-')}</b><em>${esc((c.buyReason || '').slice(0, 72))}</em></div>
+        <div class="p sell"><span>止损</span><b>${esc(stopVal)}</b><em>${esc((c.sellReason || '').slice(0, 72))}</em></div>
+        ${
+          t1
+            ? `<div class="p take"><span>止盈</span><b>${esc(t1)}</b><em>买入后先减半离场</em></div>`
+            : ''
+        }
+        ${
+          t2
+            ? `<div class="p target"><span>目标</span><b>${esc(t2)}</b><em>余仓盈利卖出目标价</em></div>`
+            : ''
+        }
+      </div>`;
+}
+
 /** 竖向单行紧凑卡片 */
 function rowHtml(c, idx, board) {
   const dir = c.direction || c.types?.join('/') || board;
@@ -169,10 +198,7 @@ function rowHtml(c, idx, board) {
           : ''
       }
 
-      <div class="row-prices">
-        <div class="p buy"><span>买</span><b>${esc(c.buyPrice || '-')}</b><em>${esc((c.buyReason || '').slice(0, 72))}</em></div>
-        <div class="p sell"><span>卖</span><b>${esc(c.sellPrice || '-')}</b><em>${esc((c.sellReason || '').slice(0, 72))}</em></div>
-      </div>
+      ${priceRowsHtml(c)}
 
       <div class="row-prog">
         <span><b>进展</b> ${esc(c.progress || c.stageLabel || '-')}</span>
@@ -228,10 +254,7 @@ function indexSignalsHtml(ix) {
           <div class="sig bias">${esc(e.biasText || `MA5 ${esc(e.ma5)} / MA10 ${esc(e.ma10)} / MA20 ${esc(e.ma20)}`)}</div>
           <div class="sig macd">${esc(e.macdText || (e.reasons || []).slice(0, 2).join(' · ') || '-')}</div>
         </div>
-        <div class="row-prices">
-          <div class="p buy"><span>买</span><b>${esc(e.buyPrice || '-')}</b><em>${esc((e.buyReason || '').slice(0, 80))}</em></div>
-          <div class="p sell"><span>卖</span><b>${esc(e.sellPrice || '-')}</b><em>${esc((e.sellReason || '').slice(0, 80))}</em></div>
-        </div>
+        ${priceRowsHtml(e)}
       </div>`;
     })
     .join('');
@@ -458,11 +481,13 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
 
   .row-prices { display: grid; grid-template-columns: 1fr; gap: 4px; margin-top: 6px; }
   .p {
-    display: grid; grid-template-columns: 22px auto 1fr; gap: 6px; align-items: baseline;
+    display: grid; grid-template-columns: 36px auto 1fr; gap: 6px; align-items: baseline;
     font-size: 12px; padding: 5px 8px; border-radius: 8px; border: 1px solid var(--line);
   }
   .p.buy { background: rgba(31,170,110,.08); }
   .p.sell { background: rgba(226,85,85,.08); }
+  .p.take { background: rgba(214,162,58,.10); }
+  .p.target { background: rgba(61,139,253,.10); }
   .p span { color: var(--muted); font-size: 11px; }
   .p b { color: var(--text); }
   .p em { color: #a9b7c8; font-style: normal; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }

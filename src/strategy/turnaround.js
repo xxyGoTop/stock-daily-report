@@ -11,7 +11,7 @@ import {
   listMajorEvents,
   seasonalPriority,
 } from '../analyze/progress.js';
-import { eventDrivenPrices } from '../analyze/pricing.js';
+import { eventDrivenPrices, takeProfitFields } from '../analyze/pricing.js';
 import { computeIndicators } from '../analyze/indicators.js';
 import { buildSignalBoard } from '../analyze/modules.js';
 import { describeFundFlow, estimateChipConcentration } from '../analyze/marketMeta.js';
@@ -456,6 +456,7 @@ function enrichCandidate(c) {
     action,
     buyPrice,
     sellPrice: prices.sellPrice,
+    ...takeProfitFields(prices),
     buyReason,
     sellReason,
     techEntry: prices.techEntry,

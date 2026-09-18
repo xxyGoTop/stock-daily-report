@@ -496,7 +496,8 @@ function pickCard(p, rank) {
           <span>止损</span><div>${fmtPrice(e.stop)}　<em style="font-style:normal;color:var(--muted)">空间 ${
             e.riskPct != null ? `${e.riskPct.toFixed(1)}%` : '-'
           }</em></div>
-          <span>目标</span><div>${fmtPrice(e.target1)} / ${fmtPrice(e.target2)}　<em style="font-style:normal;color:var(--muted)">盈亏比 ${
+          <span>止盈价</span><div>${fmtPrice(e.target1)}　<em style="font-style:normal;color:var(--muted)">买入后先减半</em></div>
+          <span>目标价</span><div>${fmtPrice(e.target2)}　<em style="font-style:normal;color:var(--muted)">余仓盈利卖出　盈亏比 ${
             e.rr != null ? e.rr.toFixed(2) : '-'
           }</em></div>
         </div>

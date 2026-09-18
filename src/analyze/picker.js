@@ -475,7 +475,11 @@ function buildEntryPlan({ stock, ind, primary, detect }) {
     entryType,
     entryMode,
     ...plan,
-    note: `${stanceNote(plan.stance, price, plan)}。${extra}`,
+    takeProfit: plan.target1,
+    profitTarget: plan.target2,
+    takeProfitText: `${plan.target1.toFixed(2)}（先减半）`,
+    profitTargetText: `${plan.target2.toFixed(2)}（余仓卖出）`,
+    note: `${stanceNote(plan.stance, price, plan)}。涨到 ${plan.target1.toFixed(2)} 先减半止盈，余仓看到 ${plan.target2.toFixed(2)} 盈利卖出。${extra}`,
   };
 }
 

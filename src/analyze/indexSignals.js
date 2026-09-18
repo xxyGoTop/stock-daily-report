@@ -11,6 +11,7 @@
 import { fetchKlines } from '../crawl/eastmoney.js';
 import { sma, isMaRising, computeIndicators } from './indicators.js';
 import { fetchSectorLeaders } from './marketTheme.js';
+import { takeProfitFields } from './pricing.js';
 
 // market 必须显式写：沪市指数也以 0 开头，按代码猜会拿到深市同号个股
 // （sz000001 是平安银行、sz000016 是深康佳A、sz000300 根本不存在）
@@ -213,8 +214,10 @@ function analyzeEtfTech(klines, meta) {
     signal = 'watch';
   }
 
+  const t1 = +(price * 1.03).toFixed(3);
+  const t2 = +target.toFixed(3);
   const buyPrice = `${buyLow.toFixed(3)} ~ ${buyHigh.toFixed(3)}`;
-  const sellPrice = `止损 ${stop.toFixed(3)} / 目标 ${target.toFixed(3)}`;
+  const sellPrice = `止损 ${stop.toFixed(3)}`;
 
   return {
     ...base,
@@ -235,6 +238,7 @@ function analyzeEtfTech(klines, meta) {
     biasText: ind.signalBoard?.biasText || '',
     buyPrice,
     sellPrice,
+    ...takeProfitFields({ sellStop: +stop.toFixed(3), sellTarget1: t1, sellTarget: t2 }),
     buyReason:
       action.includes('买入')
         ? `技术线「${techLine}」：回踩 ${buyPrice} 分批；${reasons.slice(0, 3).join('；')}`
@@ -242,7 +246,7 @@ function analyzeEtfTech(klines, meta) {
     sellReason:
       action.includes('卖出')
         ? `触发离场：${reasons[0] || techLine}；止损参考 ${stop.toFixed(3)}`
-        : `持仓纪律：跌破五日线或 ${stop.toFixed(3)} 减仓；强势可看到 ${target.toFixed(3)}`,
+        : `持仓纪律：跌破五日线或 ${stop.toFixed(3)} 减仓；涨到 ${t1.toFixed(3)} 先减半，余仓看 ${t2.toFixed(3)}`,
     reasons: reasons.slice(0, 6),
     asOf: klines[i].date,
   };

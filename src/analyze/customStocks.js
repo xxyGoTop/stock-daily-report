@@ -6,7 +6,7 @@ import { fetchKlines, fetchActiveStocks, fetchBoardRps5, fetchMarketReturns, mer
 import { fetchTencentQuote, fetchTencentDepth } from '../crawl/tencent.js';
 import { searchCninfoKeyword } from '../crawl/cninfo.js';
 import { computeIndicators } from './indicators.js';
-import { shortTermPrices, eventDrivenPrices } from './pricing.js';
+import { shortTermPrices, eventDrivenPrices, takeProfitFields } from './pricing.js';
 import { inferProgress, listMajorEvents, seasonalPriority } from './progress.js';
 import { classifyAnnouncement } from '../strategy/turnaround.js';
 import { scoreShortTerm } from '../strategy/shortTerm.js';
@@ -354,6 +354,7 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
       action,
       buyPrice: prices.buyPrice,
       sellPrice: prices.sellPrice,
+      ...takeProfitFields(prices),
       buyReason,
       sellReason,
       techEntry: prices.techEntry,
