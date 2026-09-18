@@ -129,7 +129,13 @@ export function sessionPhase(now = dayjs()) {
  *
  * @returns {{level:'fresh'|'expected'|'stale'|'unknown', klineDate, quoteDate, reportDate, daysBehind, text, warn}}
  */
-export function assessDataFreshness({ klineDate, quoteDate, baselineDate, now = dayjs() } = {}) {
+export function assessDataFreshness({
+  klineDate,
+  quoteDate,
+  baselineDate,
+  patchedIntraday = false,
+  now = dayjs(),
+} = {}) {
   const reportDate = now.format('YYYY-MM-DD');
   const phase = sessionPhase(now);
   const kd = String(klineDate ?? baselineDate ?? '').slice(0, 10);
@@ -151,8 +157,16 @@ export function assessDataFreshness({ klineDate, quoteDate, baselineDate, now = 
     };
   }
 
-  // 实时行情比K线新 → K线源集体滞后，这是最需要警告的情况
+  // 实时行情比K线新：优先看本次是否已用快照补上当日K
   if (qd && kd < qd) {
+    if (patchedIntraday) {
+      return {
+        ...base,
+        level: 'fresh',
+        warn: false,
+        text: `K线源只到 ${kd}，已用实时行情补上 ${qd} 当日K线，均线/MACD/KDJ 含盘中走势`,
+      };
+    }
     return {
       ...base,
       level: 'stale',

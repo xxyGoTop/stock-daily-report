@@ -2,8 +2,8 @@
  * 自选股分析：输入多个代码，输出技术面 + 事件进展 + 买卖价
  */
 
-import { fetchKlines, fetchActiveStocks } from '../crawl/eastmoney.js';
-import { fetchTencentQuote } from '../crawl/tencent.js';
+import { fetchKlines, fetchActiveStocks, fetchBoardRps5, fetchMarketReturns, mergeLiveBar, fetchMarketClock } from '../crawl/eastmoney.js';
+import { fetchTencentQuote, fetchTencentDepth } from '../crawl/tencent.js';
 import { searchCninfoKeyword } from '../crawl/cninfo.js';
 import { computeIndicators } from './indicators.js';
 import { shortTermPrices, eventDrivenPrices } from './pricing.js';
@@ -12,8 +12,106 @@ import { classifyAnnouncement } from '../strategy/turnaround.js';
 import { scoreShortTerm } from '../strategy/shortTerm.js';
 import { buildSignalBoard } from './modules.js';
 import { attachMarketMeta, describeFundFlow, estimateChipConcentration } from './marketMeta.js';
+import {
+  buildRpsMaps,
+  buildMarketRpsMaps,
+  evalDailyObserve,
+  evalForwardTrain,
+  evalTaoPick241005,
+} from './tao.js';
+import { tagPickStrategies } from './picker.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+
+async function attachPickTags(cards, codeKlines, { onProgress } = {}) {
+  if (!cards.length) return cards;
+  onProgress?.('对照综合选股五套算法...');
+
+  let boardIndex = { boards: [], byName: new Map() };
+  try {
+    boardIndex = await fetchBoardRps5({ includeConcept: false });
+  } catch {
+    onProgress?.('板块 RPS5 不可用，策略标签不含板块');
+  }
+  const boardTopNames = new Set(boardIndex.boards.slice(0, 10).map((b) => b.name));
+
+  let rpsMaps = null;
+  try {
+    const marketRows = await fetchMarketReturns();
+    if (marketRows.length > 1000) {
+      rpsMaps = buildMarketRpsMaps(marketRows);
+      onProgress?.(`全市场 RPS 基准：${marketRows.length} 只`);
+    }
+  } catch {
+    /* 回退为自选池内排名 */
+  }
+  if (!rpsMaps) rpsMaps = buildRpsMaps(codeKlines);
+
+  const gainerRank = new Map();
+  try {
+    const gainers = await fetchActiveStocks({ pages: 1, pageSize: 50, fid: 'f3' });
+    gainers.forEach((s, i) => gainerRank.set(s.code, i + 1));
+  } catch {
+    /* 涨幅榜第一版标签跳过 */
+  }
+
+  for (const card of cards) {
+    const klines = codeKlines[card.code] || [];
+    const ind = klines.length >= 30 ? computeIndicators(klines) : card.indicators || {};
+    const rps = {
+      rps20: rpsMaps.rps20[card.code] ?? 0,
+      rps50: rpsMaps.rps50[card.code] ?? 0,
+      rps120: rpsMaps.rps120[card.code] ?? 0,
+      rps250: rpsMaps.rps250[card.code] ?? 0,
+    };
+    const train = evalForwardTrain(klines, rps, card.turnover);
+    const daily = evalDailyObserve(klines, rps, card.turnover);
+    const pick241005 = evalTaoPick241005(klines, rps, card.turnover, { indexCanBuy: true });
+    const rank = gainerRank.get(card.code);
+    const inFirstPage = !!(pick241005.hit && rank && rank <= 29);
+
+    const tags = tagPickStrategies(
+      {
+        stock: {
+          code: card.code,
+          name: card.name,
+          price: card.price,
+          changePct: card.changePct,
+          volumeRatio: card.volumeRatio,
+          turnover: card.turnover,
+          industry: card.industry,
+          mainNetInflow: card.mainNetInflow,
+          mainNetInflowPct: card.mainNetInflowPct,
+        },
+        ind,
+        klines,
+        rps,
+        pick241005,
+        forwardTrain: train,
+        dailyObserve: daily,
+        mustPass: card.mustPass,
+        veto: card.veto || [],
+        inFirstPage,
+        observeRank: inFirstPage ? rank : null,
+      },
+      { boardTopNames, boardByName: boardIndex.byName }
+    );
+
+    card.pickTags = tags;
+    card.primaryName = tags.primaryName;
+    card.strategies = tags.strategies;
+    card.baseLabel = tags.baseLabel;
+    card.baseLevel = tags.baseLevel;
+    card.baseDrop = tags.baseDrop;
+    card.inFirstPage = tags.inFirstPage;
+    card.observeRank = tags.observeRank;
+    card.inTopBoard = tags.inTopBoard;
+    card.board = tags.board;
+    card.rps = tags.rps;
+    card.taoTags = tags.strategies.map((s) => s.short);
+  }
+  return cards;
+}
 
 function normalizeCodes(input) {
   const raw = Array.isArray(input) ? input : String(input || '').split(/[\s,，;；|]+/);
@@ -58,19 +156,40 @@ async function resolveQuotes(codes) {
   }
   for (const code of codes) {
     if (nameMap.has(code)) continue;
-    const q = await fetchQuoteName(code);
+    const q = await fetchTencentDepth(code);
     if (q) {
-      const changePct = q.prevClose ? ((q.price - q.prevClose) / q.prevClose) * 100 : 0;
       nameMap.set(code, {
         code,
         name: q.name,
         price: q.price,
-        changePct,
-        volumeRatio: 0,
-        turnover: 0,
-        amplitude: 0,
+        changePct: q.changePct,
+        volume: q.volume,
+        amount: q.amount,
+        amplitude: q.amplitude,
+        turnover: q.turnover,
+        volumeRatio: q.volumeRatio,
+        high: q.high,
+        low: q.low,
+        open: q.open,
+        prevClose: q.prevClose,
         mainNetInflow: 0,
       });
+    } else {
+      const lite = await fetchQuoteName(code);
+      if (lite) {
+        const changePct = lite.prevClose ? ((lite.price - lite.prevClose) / lite.prevClose) * 100 : 0;
+        nameMap.set(code, {
+          code,
+          name: lite.name,
+          price: lite.price,
+          changePct,
+          volumeRatio: lite.volumeRatio || 0,
+          turnover: lite.turnover || 0,
+          amplitude: lite.amplitude || 0,
+          prevClose: lite.prevClose,
+          mainNetInflow: 0,
+        });
+      }
     }
     await sleep(80);
   }
@@ -125,6 +244,8 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
   const season = seasonalPriority();
   const cards = [];
   const codeKlines = {};
+  const clock = await fetchMarketClock().catch(() => null);
+  const liveDate = clock?.date || '';
 
   for (let i = 0; i < codes.length; i++) {
     const code = codes[i];
@@ -132,9 +253,12 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
     const quote = quoteMap.get(code);
     let klines = [];
     try {
-      klines = await fetchKlines(code, { limit: 90 });
+      klines = await fetchKlines(code, { limit: 300 });
     } catch {
       klines = [];
+    }
+    if (liveDate && quote?.price) {
+      klines = mergeLiveBar(klines, quote, liveDate);
     }
     codeKlines[code] = klines;
 
@@ -267,6 +391,7 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
   }
 
   await attachMarketMeta(cards, { codeKlines, onProgress });
+  await attachPickTags(cards, codeKlines, { onProgress });
 
   return {
     codes,

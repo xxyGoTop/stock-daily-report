@@ -184,6 +184,21 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
       const sb = c.signalBoard || {};
       return (
         `${i + 1}. ${c.code} ${c.name} [${c.direction}] ${c.action}\n` +
+        `   策略：${
+          c.primaryName
+            ? `主策略 ${c.primaryName}`
+            : '未命中五套算法'
+        }${
+          (c.strategies || []).length
+            ? `｜命中 ${(c.strategies || []).map((s) => s.short).join('+')}`
+            : ''
+        }${c.baseLabel ? `｜${c.baseLabel}` : ''}${
+          c.inFirstPage && c.observeRank ? `｜涨幅榜第一版#${c.observeRank}` : ''
+        }${
+          c.board?.rps5 != null
+            ? `｜${c.board.name} RPS5 ${c.board.rps5.toFixed(0)}`
+            : ''
+        }\n` +
         `   ${sb.biasText || ''}｜${sb.macdText || ''}\n` +
         `   ${c.themeExpect || ''}\n` +
         `   ${c.moveReason || ''}\n` +

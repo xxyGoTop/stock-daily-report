@@ -375,6 +375,43 @@ function detectStrategies(s, ctx) {
 }
 
 /**
+ * 给单只股票打上与 npm run pick 相同的策略标签。
+ * 不命中任何算法时仍返回基底 / 板块，方便自选对照。
+ */
+export function tagPickStrategies(s, ctx = {}) {
+  const detect = detectStrategies(s, ctx);
+  const ordered = [...detect.hits].sort(
+    (a, b) => STRATEGY_BY_KEY.get(a.key).order - STRATEGY_BY_KEY.get(b.key).order
+  );
+  const primary = ordered[0]?.key || null;
+  return {
+    primary,
+    primaryName: primary ? STRATEGY_BY_KEY.get(primary).name : null,
+    strategies: ordered.map((h) => ({
+      key: h.key,
+      name: STRATEGY_BY_KEY.get(h.key).name,
+      short: STRATEGY_BY_KEY.get(h.key).short,
+      order: STRATEGY_BY_KEY.get(h.key).order,
+      detail: h.detail,
+    })),
+    hitCount: ordered.length,
+    baseCount: detect.bases.baseCount,
+    baseLabel: detect.stance.label,
+    baseLevel: detect.stance.level,
+    baseDrop: detect.bases.baseDrop,
+    inBase: detect.bases.inBase,
+    yearHighRatio: detect.yearHighRatio != null ? round2(detect.yearHighRatio) : null,
+    board: detect.board
+      ? { name: detect.board.name, rps5: detect.board.rps5, changePct: detect.board.changePct }
+      : null,
+    inTopBoard: detect.inTopBoard,
+    inFirstPage: !!s.inFirstPage,
+    observeRank: s.observeRank || null,
+    rps: s.rps || null,
+  };
+}
+
+/**
  * 策略对应的买入区间与止损
  *
  * 不同思路的买点位置不一样，不能都套「MA5 附近」：

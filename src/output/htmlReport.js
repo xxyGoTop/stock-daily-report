@@ -43,6 +43,42 @@ function timelineHtml(timeline = []) {
     .join('<span class="tl-sep">→</span>')}</div>`;
 }
 
+function pickTagsHtml(c) {
+  const tags = c.pickTags;
+  if (!tags) return '';
+  const hits = tags.strategies || [];
+  if (!tags.primaryName && !hits.length && !tags.baseLabel && !tags.board) return '';
+
+  const hitPills = hits.map((s) => `<span class="pill tao">${esc(s.short)}</span>`).join('');
+  const baseCls = `base-${tags.baseLevel || 'unknown'}`;
+  const extra = [
+    tags.inTopBoard ? '<span class="pill">强度前十板块</span>' : '',
+    tags.inFirstPage && tags.observeRank
+      ? `<span class="pill">涨幅榜第一版#${esc(tags.observeRank)}</span>`
+      : '',
+    tags.board?.rps5 != null
+      ? `<span class="pill soft">${esc(tags.board.name)} RPS5 ${tags.board.rps5.toFixed(0)}</span>`
+      : '',
+  ].join('');
+
+  return `<div class="pick-tags">
+    ${
+      tags.primaryName
+        ? `<span class="pill">主策略：${esc(tags.primaryName)}</span>`
+        : '<span class="pill soft">未命中五套算法</span>'
+    }
+    ${hitPills}
+    ${
+      tags.baseLabel
+        ? `<span class="base-tag ${baseCls}">${esc(tags.baseLabel)}${
+            tags.inBase && tags.baseDrop ? `（回撤${(tags.baseDrop * 100).toFixed(0)}%）` : ''
+          }</span>`
+        : ''
+    }
+    ${extra}
+  </div>`;
+}
+
 function eventsHtml(events = []) {
   if (!events?.length) return '<span class="muted">暂无重大事项</span>';
   return events
@@ -63,6 +99,7 @@ function rowHtml(c, idx, board) {
     c.rps != null
       ? `<span class="pill soft">RPS50 ${esc(c.rps.rps50)} / 120 ${esc(c.rps.rps120)} / 250 ${esc(c.rps.rps250)}</span>`
       : '';
+  const pickTags = pickTagsHtml(c);
   const xq = c.xueqiu;
   const xqHtml = !xq
     ? ''
@@ -89,7 +126,7 @@ function rowHtml(c, idx, board) {
         <div class="name">
           <strong>${esc(c.code)}</strong> ${esc(c.name)}
           <span class="pill">${esc(dir)}</span>
-          ${tao}${rps}
+          ${pickTags ? '' : `${tao}${rps}`}
           ${c.category ? `<span class="pill soft">${esc(c.category)}</span>` : ''}
           ${c.certainty != null ? `<span class="pill soft">确定${esc(c.certainty)}/5</span>` : ''}
           ${
@@ -106,6 +143,7 @@ function rowHtml(c, idx, board) {
           <span class="tag ${actionClass(c.action)}">${esc(c.action || '跟踪')}</span>
         </div>
       </div>
+      ${pickTags}
 
       <div class="signal-board">
         <div class="sig bias">${esc(sb.biasText || '乖离：-')}</div>
@@ -470,6 +508,12 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
   .ev b { color: #9ec1ff; font-weight: 600; margin-right: 4px; }
   .muted { color: var(--muted); font-size: 11px; }
   .pill.tao { background: rgba(90,140,255,.18); color: #9ec1ff; border: 1px solid rgba(90,140,255,.35); }
+  .pick-tags { display: flex; flex-wrap: wrap; gap: 5px; margin: 8px 0 2px; }
+  .base-tag { font-size: 10px; padding: 1px 7px; border-radius: 999px; white-space: nowrap; }
+  .base-good { background: rgba(31,170,110,.16); color: #7dffa8; border: 1px solid rgba(31,170,110,.35); }
+  .base-caution { background: rgba(214,162,58,.16); color: #ffd9a0; border: 1px solid rgba(214,162,58,.4); }
+  .base-risky { background: rgba(226,85,85,.16); color: #ff9b9b; border: 1px solid rgba(226,85,85,.4); }
+  .base-unknown { background: #243041; color: #9eb0c5; border: 1px solid var(--line); }
   .ix-box { margin-bottom: 14px; }
   .ix-summary { border-radius: 10px; padding: 12px 14px; margin-bottom: 10px; border: 1px solid var(--line); background: #171d24; }
   .ix-summary.ix-buy { border-color: rgba(61,214,140,.4); }
@@ -553,7 +597,12 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
 
     ${
       isCustom
-        ? section(`自选股明细（${customCards.length}）`, '含乖离/MACD固定指标 · 雪球大V(粉丝≥4000)', customCards, '自选')
+        ? section(
+            `自选股明细（${customCards.length}）`,
+            '对照综合选股五套算法打标签 · 含乖离/MACD · 雪球大V(粉丝≥4000)',
+            customCards,
+            '自选'
+          )
         : [
             indexSignalsHtml(ix),
             taoPickHtml(shortTerm),

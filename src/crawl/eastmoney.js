@@ -4,6 +4,7 @@
  */
 
 import { cleanStockName, readResponseText } from './decode.js';
+import { fetchTencentDepth } from './tencent.js';
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -93,7 +94,7 @@ export function toMarketSymbol(code, market) {
  * 拉取活跃正股列表（排除退市整理、债券等）
  * fields: 代码/名称/最新价/涨跌幅/量比/换手/成交额/振幅/市值 等
  */
-export async function fetchActiveStocks({ pages = 8, pageSize = 100 } = {}) {
+export async function fetchActiveStocks({ pages = 8, pageSize = 100, fid = 'f6' } = {}) {
   const fields =
     'f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f22,f23,f62,f100,f102,f184';
   // A股：沪深主板+创业板+科创板
@@ -102,7 +103,7 @@ export async function fetchActiveStocks({ pages = 8, pageSize = 100 } = {}) {
 
   for (let pn = 1; pn <= pages; pn++) {
     const query =
-      `pn=${pn}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=f6` +
+      `pn=${pn}&pz=${pageSize}&po=1&np=1&fltt=2&invt=2&fid=${fid}` +
       `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
     const data = await fetchClist(query);
     const list = data?.data?.diff || [];
@@ -851,6 +852,73 @@ async function fetchKlinesEm(code, limit, market) {
 
 const lastDate = (kl) => (kl.length ? String(kl[kl.length - 1].date).slice(0, 10) : '');
 
+function scaleLiveVolume(klineVol, liveVol) {
+  if (!klineVol || !liveVol) return liveVol || 0;
+  const r = klineVol / liveVol;
+  if (r > 30) return liveVol * 100;
+  if (r < 1 / 30) return liveVol / 100;
+  return liveVol;
+}
+
+/**
+ * 用实时快照补/替换当日 K 线。盘中新浪不含当天、腾讯/东财日 K 又失败时靠这条链路。
+ */
+export function mergeLiveBar(klines, live, date) {
+  if (!Array.isArray(klines) || !klines.length) return klines || [];
+  if (!live || !(Number(live.price) > 0) || !date) return klines;
+  const last = klines[klines.length - 1];
+  const lastDay = String(last.date).slice(0, 10);
+  if (lastDay > date) return klines;
+
+  const prev = lastDay < date ? last.close : Number(live.prevClose) || last.close;
+  const open = Number(live.open) > 0 ? Number(live.open) : prev;
+  const close = Number(live.price);
+  const high = Math.max(Number(live.high) || 0, open, close);
+  const lowRaw = Number(live.low);
+  const low = Math.min(lowRaw > 0 ? lowRaw : close, open, close);
+  const volume = scaleLiveVolume(last.volume, Number(live.volume) || 0);
+  const changePct =
+    live.changePct != null && Number.isFinite(Number(live.changePct))
+      ? Number(live.changePct)
+      : prev
+        ? ((close - prev) / prev) * 100
+        : 0;
+  const amplitude = Number(live.amplitude) || (prev ? ((high - low) / prev) * 100 : 0);
+
+  const bar = {
+    date,
+    open,
+    close,
+    high,
+    low,
+    volume,
+    amount: Number(live.amount) || 0,
+    amplitude,
+    changePct,
+    turnover: Number(live.turnover) || 0,
+    intraday: true,
+  };
+  if (probeState) probeState.patchedIntraday = true;
+  return lastDay === date ? [...klines.slice(0, -1), bar] : [...klines, bar];
+}
+
+async function fetchLiveBar(code) {
+  try {
+    const snaps = await fetchStockSnapshots([code]);
+    const s = snaps.find((x) => x.code === String(code).padStart(6, '0')) || snaps[0];
+    if (s?.price > 0) return s;
+  } catch {
+    /* tencent fallback */
+  }
+  try {
+    const q = await fetchTencentDepth(code);
+    if (q?.price > 0) return q;
+  } catch {
+    /* ignore */
+  }
+  return null;
+}
+
 const KLINE_SOURCES = {
   sina: (code, limit, market) => fetchKlinesSina(toMarketSymbol(code, market), limit),
   tencent: (code, limit, market) => fetchKlinesTencent(toMarketSymbol(code, market), limit),
@@ -955,6 +1023,7 @@ export async function getDataFreshness() {
     quoteDate: p.quoteDate,
     quoteTime: p.quoteTime,
     sources: p.sources,
+    patchedIntraday: !!p.patchedIntraday,
   };
 }
 
@@ -973,7 +1042,8 @@ export async function getKlineBaselineDate() {
  */
 export async function fetchKlines(code, { limit = 120, market } = {}) {
   const c = String(code).padStart(6, '0');
-  const { klineDate, order } = await resolveProbe();
+  const p = await resolveProbe();
+  const { quoteDate, order } = p;
 
   // 拿不到达标数据时，保留各源里最新的那份兜底，而不是直接返回空
   let best = [];
@@ -990,10 +1060,21 @@ export async function fetchKlines(code, { limit = 120, market } = {}) {
     }
     if (kl.length < 10) continue;
     const d = lastDate(kl);
-    if (!klineDate || d >= klineDate) return kl;
     if (d > lastDate(best)) best = kl;
+    // 已经追上实时行情当天，不必再试更慢的源
+    if (quoteDate && d >= quoteDate) return kl;
+    // 只是追平了探测基准、但仍落后于实时行情 → 继续试下一个源
   }
-  return best;
+
+  let kl = best;
+  if (quoteDate && lastDate(kl) < quoteDate && kl.length) {
+    const live = await fetchLiveBar(c);
+    if (live?.price > 0) {
+      kl = mergeLiveBar(kl, live, quoteDate);
+      p.patchedIntraday = true;
+    }
+  }
+  return kl;
 }
 
 async function fetchKlinesSina(symbol, limit) {
