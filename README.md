@@ -47,6 +47,7 @@ npm start
 | `npm run review` | **当日复盘**：情绪打分 + 连板梯队 + 今日主线 + 明日关注（HTML） |
 | `npm run morning` | **早盘竞价**：9:30 前热点板块 + 竞价选股（HTML） |
 | `npm run seal -- 有研新材` | **封单监控**：涨停买一还厚不厚，能不能继续拿（HTML） |
+| `npm run pick` | **综合选股**：盘面分析 + 五算法评分前 30（HTML，可分页） |
 | `npm run journal` | 打开交易台账网页，记录并统计盈亏 |
 | `npm run xueqiu:login` | 单独走一次雪球登录 |
 
@@ -197,6 +198,31 @@ npm run review -- --no-open          # 不自动打开浏览器
 
 > `--date` 只对涨停/跌停/炸板梯队生效；板块强度和量能走的是实时接口，拿不到历史值，跑历史日期时会提示。
 
+### 综合选股 `npm run pick`
+
+把**当日盘面、指数、板块**和分析结论放在同一页，再按下面五套算法综合评分，取前 30 只，每只给买入区间、止损、理由和风险。列表可按算法筛选、每页 10 只翻页。
+
+```bash
+npm run pick                    # 盘面 + 五算法前 30，弹出 HTML
+npm run 选股                    # 同上
+npm run pick -- --limit=20      # 只要前 20
+npm run pick -- --fast          # 少扫一些（约 2~3 分钟）
+npm run pick -- --detail=300    # 扩大扫描池（更准，更慢）
+npm run pick -- --no-open       # 不自动打开浏览器
+```
+
+五套算法按优先级：
+
+1. **率先一年新高** —— 优先主流板块（板块指数 RPS5），重点看当日涨幅榜第一版
+2. **高 RPS 深调回升** —— 第 1 / 第 2 个基底可参与，第 3 个起谨慎；卡片上标「第几个基底」
+3. **顺向火车轨** —— 优先 RPS250 高、右侧年高、10 日线下买点
+4. **火车每日观察** —— 高 RPS 且在年高附近
+5. **五日线多头共振** —— 短线，严格止损
+
+盘面分析会**直接改这五套算法的权重**：指数走坏或情绪退潮时，年新高/火车轨自动降权；情绪过热时改偏深调回升。盘面过冷或指数 avoid 时，整表只作观察池。
+
+页面布局：上半左右两栏（左盘面数据 / 右分析结论；左指数中期信号 / 右板块强度双列卡片），下半是选股列表。结果在 `output/<日期>/latest-pick.html`。
+
 三档筛选条件：
 
 - **五日线**（硬门槛）——必须站上 MA5 且 MA5 向上，跌破的直接淘汰
@@ -270,6 +296,7 @@ output/
     latest-review.*  当日复盘
     latest-morning.* 早盘竞价
     latest-seal.*    封单监控
+    latest-pick.*    综合选股（盘面 + 五算法前30）
   latest.html        最近一次运行的快捷入口
 ```
 
@@ -283,6 +310,7 @@ src/
   review.js             入口：当日复盘报告（HTML）
   morning.js            入口：早盘热点 + 集合竞价选股（HTML）
   seal.js               入口：涨停封单监控（HTML）
+  pick.js               入口：盘面分析 + 五算法综合选股（HTML）
   crawl/
     eastmoney.js        行情 / K线 / 股票列表 / 板块快照
     decode.js           按响应头解码（腾讯/新浪 GBK）
@@ -310,6 +338,8 @@ src/
     review.js           当日复盘：情绪打分 / 连板梯队 / 主线 / 明日关注
     morning.js          早盘：竞价高开聚板块 + 开盘选股
     seal.js             涨停封单：买一厚度 + 能否继续持有
+    marketTape.js       盘面总结：涨跌家数 / 情绪 / 主线 → 算法权重
+    picker.js           五算法综合评分 + 买入计划 / 理由
     resolveNames.js     中文名 → 6位代码
     tradeNote.js        交易便签
   output/
@@ -319,6 +349,7 @@ src/
     reviewHtml.js       当日复盘 HTML
     morningHtml.js      早盘竞价 HTML
     sealHtml.js         封单监控 HTML
+    pickHtml.js         综合选股 HTML（分页 + 左右分栏）
     open.js             调用系统默认浏览器打开报告
   journal/              交易台账（本地网页 + 统计）
 ```

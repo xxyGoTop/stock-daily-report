@@ -218,9 +218,12 @@ export const baseCss = `
 /**
  * 统一页面骨架
  *
- * @param {{title:string, h1:string, sub:string, badges?:string[], hero?:string, body:string, foot?:string}} o
+ * extraCss 给单份报告追加专属样式（如分页、左右分栏），避免为了一个页面往 baseCss 里塞规则。
+ * script 同理，用于页面内交互（目前只有选股页的分页）。
+ *
+ * @param {{title:string, h1:string, sub:string, badges?:string[], hero?:string, body:string, foot?:string, extraCss?:string, script?:string}} o
  */
-export function htmlShell({ title, h1, sub, badges = [], hero = '', body, foot }) {
+export function htmlShell({ title, h1, sub, badges = [], hero = '', body, foot, extraCss = '', script = '' }) {
   const badgeHtml = badges
     .filter(Boolean)
     .map((b) =>
@@ -236,7 +239,7 @@ export function htmlShell({ title, h1, sub, badges = [], hero = '', body, foot }
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1" />
 <title>${esc(title)}</title>
-<style>${baseCss}</style>
+<style>${baseCss}${extraCss}</style>
 </head>
 <body>
   <div class="wrap">
@@ -249,6 +252,7 @@ export function htmlShell({ title, h1, sub, badges = [], hero = '', body, foot }
     ${body}
     <footer>${esc(foot || '免责声明：公开数据统计工具，不构成投资建议，请自行判断与风控。')}</footer>
   </div>
+${script ? `<script>${script}</script>` : ''}
 </body>
 </html>`;
 }

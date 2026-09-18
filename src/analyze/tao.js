@@ -372,49 +372,112 @@ export function evalForwardTrain(klines, rps, turnover) {
 
 /**
  * 基底计数（241005「第一个或第二个基底」）
- * 从新高回落 minDrop 以上视为进入一个基底，收盘重新突破前高视为该基底结束。
+ *
+ * 「第几个基底」数的是本轮上涨结构里的第几次整理，不是过去一年里跌过几次，
+ * 所以有三条约束，缺一条就会数出「第7个基底」这种没有意义的结果：
+ *   1. 从本轮起涨低点开始数（lookback 内的最低点），不从窗口第一根盲数
+ *   2. 整理必须够长（minBars）才算基底，几天的洗盘不算
+ *   3. 回撤超过 resetDrop 说明上涨结构已破坏，计数清零、重新起算
+ *
  * 第 3 个及以上基底，文章建议谨慎。
  */
-export function countBases(klines, { minDrop = 0.18 } = {}) {
-  if (!klines?.length) return { baseCount: 0, inBase: false, drawdown: 0 };
-  const highs = klines.map((k) => k.high);
-  const lows = klines.map((k) => k.low);
-  const closes = klines.map((k) => k.close);
+export function countBases(klines, {
+  minDrop = 0.15,
+  minBars = 10,
+  resetDrop = 0.4,
+  lookback = 300,
+} = {}) {
+  const empty = {
+    baseCount: 0,
+    inBase: false,
+    drawdown: 0,
+    baseDrop: 0,
+    baseBars: 0,
+    resetCount: 0,
+    lastResetBarsAgo: null,
+  };
+  if (!klines?.length) return empty;
 
-  let peak = highs[0];
+  const bars = klines.slice(-lookback);
+  const highs = bars.map((k) => k.high);
+  const lows = bars.map((k) => k.low);
+  const closes = bars.map((k) => k.close);
+  const last = bars.length - 1;
+
+  // 本轮上涨的起点：窗口内最低点。它之前的震荡属于上一轮结构，不该计入
+  let anchor = 0;
+  for (let i = 1; i <= last; i++) {
+    if (lows[i] < lows[anchor]) anchor = i;
+  }
+
+  let peak = highs[anchor];
   let baseCount = 0;
   let inBase = false;
   let baseLow = Infinity;
+  let baseStart = anchor;
   let lastBaseDrop = 0;
+  let resetCount = 0;
+  let lastResetIdx = null;
 
-  for (let i = 1; i < klines.length; i++) {
+  for (let i = anchor + 1; i <= last; i++) {
     if (!inBase) {
       if (highs[i] > peak) peak = highs[i];
       if (peak > 0 && (peak - lows[i]) / peak >= minDrop) {
         inBase = true;
-        baseCount++;
         baseLow = lows[i];
+        baseStart = i;
       }
-    } else {
-      if (lows[i] < baseLow) baseLow = lows[i];
-      if (closes[i] > peak) {
-        lastBaseDrop = peak > 0 ? (peak - baseLow) / peak : 0;
-        inBase = false;
-        peak = highs[i];
-        baseLow = Infinity;
+      continue;
+    }
+
+    if (lows[i] < baseLow) baseLow = lows[i];
+    const dd = peak > 0 ? (peak - baseLow) / peak : 0;
+
+    if (dd >= resetDrop) {
+      // 跌穿这个幅度就不是整理而是趋势破坏，之前累积的基底序号作废
+      baseCount = 0;
+      resetCount++;
+      lastResetIdx = i;
+      inBase = false;
+      peak = highs[i];
+      baseLow = Infinity;
+      continue;
+    }
+
+    if (closes[i] > peak) {
+      // 收盘突破整理前高度，本基底结束
+      if (i - baseStart >= minBars) {
+        baseCount++;
+        lastBaseDrop = dd;
       }
+      inBase = false;
+      peak = highs[i];
+      baseLow = Infinity;
     }
   }
 
-  const i = klines.length - 1;
-  const drawdown = peak > 0 ? (peak - closes[i]) / peak : 0;
-  const baseDrop = inBase && peak > 0 ? (peak - baseLow) / peak : lastBaseDrop;
+  // 仍在整理中：够长才算「正在构筑第 N 个基底」
+  let baseBars = 0;
+  if (inBase) {
+    baseBars = last - baseStart;
+    if (baseBars >= minBars) {
+      baseCount++;
+      lastBaseDrop = peak > 0 ? (peak - baseLow) / peak : 0;
+    } else {
+      inBase = false;
+    }
+  }
+
+  const drawdown = peak > 0 ? (peak - closes[last]) / peak : 0;
 
   return {
     baseCount,
     inBase,
     drawdown: +drawdown.toFixed(3),
-    baseDrop: +baseDrop.toFixed(3),
+    baseDrop: +lastBaseDrop.toFixed(3),
+    baseBars,
+    resetCount,
+    lastResetBarsAgo: lastResetIdx == null ? null : last - lastResetIdx,
   };
 }
 
