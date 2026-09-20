@@ -20,6 +20,7 @@ import {
   evalTaoPick241005,
 } from './tao.js';
 import { tagPickStrategies } from './picker.js';
+import { attachStrengthVerdict, momentumFade } from './strengthVerdict.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -337,6 +338,8 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
       changePct: stock.changePct,
       volumeRatio: stock.volumeRatio,
       turnover: stock.turnover,
+      amplitude: stock.amplitude,
+      circMV: stock.circMV || quote?.circMV,
       industry: stock.industry || '未知行业',
       region: stock.region || '',
       mainNetInflow: stock.mainNetInflow || 0,
@@ -385,6 +388,7 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
         : null,
       mustPass: techScore?.mustPass,
       veto: techScore?.veto || [],
+      momentumFade: momentumFade(ind),
       season,
     });
 
@@ -392,12 +396,18 @@ export async function analyzeCustomStocks(codesInput, { onProgress } = {}) {
   }
 
   await attachMarketMeta(cards, { codeKlines, onProgress });
+  attachStrengthVerdict(cards, codeKlines);
   await attachPickTags(cards, codeKlines, { onProgress });
+
+  const faded = cards
+    .filter((c) => c.momentumFade?.fade)
+    .map((c) => ({ code: c.code, name: c.name, reason: c.momentumFade.reason }));
 
   return {
     codes,
     season,
     candidates: cards,
+    faded,
     scanned: codes.length,
     scoredCount: cards.length,
   };

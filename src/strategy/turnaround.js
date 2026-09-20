@@ -15,6 +15,7 @@ import { eventDrivenPrices, takeProfitFields } from '../analyze/pricing.js';
 import { computeIndicators } from '../analyze/indicators.js';
 import { buildSignalBoard } from '../analyze/modules.js';
 import { describeFundFlow, estimateChipConcentration } from '../analyze/marketMeta.js';
+import { buildStrengthVerdict, momentumFade } from '../analyze/strengthVerdict.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -451,8 +452,24 @@ function enrichCandidate(c) {
     region: quote.region || '',
     mainNetInflow: quote.mainNetInflow || 0,
     mainNetInflowPct: quote.mainNetInflowPct || 0,
+    circMV: quote.circMV || c.circMV,
+    amplitude: quote.amplitude,
+    turnover: c.latest?.turnover ?? quote.turnover,
     fundFlow,
     chips,
+    strength: buildStrengthVerdict({
+      klines: c.klines || [],
+      ind: c.ind || null,
+      stock: {
+        price: c.latest?.close ?? quote.price,
+        changePct: c.latest?.changePct ?? quote.changePct,
+        turnover: c.latest?.turnover ?? quote.turnover,
+        mainNetInflow: quote.mainNetInflow || 0,
+        mainNetInflowPct: quote.mainNetInflowPct || 0,
+      },
+      chips,
+      fundFlow,
+    }),
     action,
     buyPrice,
     sellPrice: prices.sellPrice,
@@ -594,12 +611,29 @@ export async function runTurnaroundStrategy({
     await sleep(100);
   }
 
-  const candidates = picked.map(enrichCandidate);
+  let excludedFade = 0;
+  const pickedStrong = picked.filter((c) => {
+    if (!c.ind) return true;
+    const fade = momentumFade(c.ind);
+    if (fade.fade) {
+      excludedFade++;
+      return false;
+    }
+    return true;
+  });
+  const candidates = pickedStrong.map(enrichCandidate);
+
+  const codeKlines = {};
+  for (const c of picked) {
+    if (c.code && c.klines?.length) codeKlines[c.code] = c.klines;
+  }
 
   return {
     season,
     announcementHits: anns.length,
     rankedCount: ranked.length,
+    excludedFade,
+    codeKlines,
     candidates,
     ops: {
       focus: ops.focus.slice(0, maxCandidates).map(enrichCandidate),

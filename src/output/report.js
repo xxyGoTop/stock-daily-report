@@ -5,6 +5,7 @@
 import dayjs from 'dayjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { formatStrengthLines } from '../analyze/strengthVerdict.js';
 
 function line(char = '─', n = 64) {
   return char.repeat(n);
@@ -34,14 +35,19 @@ function printCard(p, c, i) {
   const sb = c.signalBoard || {};
   p(
     `  ${String(i + 1).padStart(2, '0')}. ${c.code} ${c.name}  [${c.direction || c.types?.join('/') || '-'}]  ` +
-      `得分${c.score ?? '-'}  价${fmtPrice(c.price)} ${fmtPct(c.changePct)}`
+      `得分${c.score ?? '-'}  价${fmtPrice(c.price)} ${fmtPct(c.changePct)}` +
+      `${c.momentumFade?.fade ? '  ⚠动能转弱' : ''}`
   );
+  if (c.momentumFade?.fade) {
+    p(`      ⚠ 动能转弱：${c.momentumFade.reasons?.join('；') || c.momentumFade.reason}`);
+  }
   p(`      固定指标：${sb.biasText || '乖离:-'} ｜ ${sb.macdText || 'MACD:-'}`);
   if (c.techEntry || c.techEntryText) {
     p(`      技术建仓：${c.techEntry || '-'}${c.techEntryText ? `｜${c.techEntryText}` : ''}`);
   }
   p(`      行业板块：${c.industry || '未知行业'}${c.region ? ` · ${c.region}` : ''}`);
   p(`      资金流入：${c.fundFlow?.text || '-'}`);
+  if (c.capital) p(`      ${c.capital.text}${c.capital.note ? `　${c.capital.note}` : ''}`);
   p(`      筹码集中：${c.chips?.text || '-'}`);
   if (c.themeExpect) p(`      ${c.themeExpect}`);
   if (c.moveReason) p(`      ${c.moveReason}`);
@@ -75,6 +81,9 @@ function printCard(p, c, i) {
   }
   if (c.observeRank) {
     p(`      每日观察：当日涨幅榜第一版第 ${c.observeRank} 名`);
+  }
+  if (c.strength) {
+    for (const line of formatStrengthLines(c.strength)) p(`      ${line}`);
   }
 }
 
@@ -165,7 +174,10 @@ export function printReport({ modules, meta, turnaround, indexSignals, brief, sh
   p(line('═'));
   p('【模块一】正股（纯技术 + 顺向火车轨/火车每日观察/蓝色钻石）');
   p(line('═'));
-  p(`候选：${plain.length}`);
+  p(
+    `候选：${plain.length}` +
+      `${shortTerm?.excludedFade ? `　动能转弱已剔除 ${shortTerm.excludedFade}` : ''}`
+  );
   plain.slice(0, 15).forEach((c, i) => printCard(p, c, i));
 
   p('');

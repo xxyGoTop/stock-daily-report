@@ -5,6 +5,7 @@
 import dayjs from 'dayjs';
 import fs from 'node:fs';
 import path from 'node:path';
+import { strengthCss, strengthHtml } from './strengthHtml.js';
 
 function esc(s) {
   return String(s ?? '')
@@ -148,7 +149,7 @@ function rowHtml(c, idx, board) {
       </div>`;
 
   return `
-  <article class="row">
+  <article class="row${c.momentumFade?.fade ? ' fade' : ''}">
     <div class="row-idx">${String(idx + 1).padStart(2, '0')}</div>
     <div class="row-main">
       <div class="row-top">
@@ -166,6 +167,16 @@ function rowHtml(c, idx, board) {
               : ''
           }
           <span class="pill soft">分${esc(c.score ?? '-')}</span>
+          ${
+            c.momentumFade?.fade
+              ? `<span class="pill fade-pill">动能转弱</span>`
+              : ''
+          }
+          ${
+            c.capital
+              ? `<span class="pill cap-${esc(c.capital.kind)}">${esc(c.capital.kindLabel)}</span>`
+              : ''
+          }
         </div>
         <div class="quote">
           <b>${fmtPrice(c.price)}</b> ${fmtPct(c.changePct)}
@@ -173,6 +184,13 @@ function rowHtml(c, idx, board) {
         </div>
       </div>
       ${pickTags}
+      ${
+        c.momentumFade?.fade
+          ? `<div class="fade-banner">⚠ 动能转弱　${esc(c.momentumFade.reason)}${
+              c.momentumFade.reasons?.length > 1 ? `；${esc(c.momentumFade.reasons.slice(1).join('；'))}` : ''
+            }</div>`
+          : ''
+      }
 
       <div class="signal-board">
         <div class="sig bias">${esc(sb.biasText || '乖离：-')}</div>
@@ -187,6 +205,13 @@ function rowHtml(c, idx, board) {
       <div class="meta-board">
         <div class="meta ind"><b>行业</b> ${esc(c.industry || '未知行业')}${c.region ? ` · ${esc(c.region)}` : ''}</div>
         <div class="meta fund ${esc(c.fundFlow?.level || '')}"><b>资金</b> ${esc(c.fundFlow?.text || '资金：-')}</div>
+        ${
+          c.capital
+            ? `<div class="meta capital cap-${esc(c.capital.kind)}"><b>${esc(c.capital.kindLabel)}</b> ${esc(c.capital.instText)}${
+                c.capital.mainText ? ` · ${esc(c.capital.mainText)}` : ''
+              }${c.capital.note ? ` · ${esc(c.capital.note)}` : ''}</div>`
+            : ''
+        }
         <div class="meta chip"><b>筹码</b> ${esc(c.chips?.text || '筹码：-')}</div>
       </div>
       ${
@@ -198,6 +223,7 @@ function rowHtml(c, idx, board) {
           : ''
       }
 
+      ${strengthHtml(c.strength)}
       ${priceRowsHtml(c)}
 
       <div class="row-prog">
@@ -366,7 +392,7 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
   const stList = modules?.stStocks || [];
   const eventList = modules?.eventStocks || [];
   const customCards = custom?.candidates || [];
-  const isCustom = !!customCards.length && meta?.mode === 'custom';
+  const isCustom = meta?.mode === 'custom';
   const ix = indexSignals || brief?.indexSignals;
 
   const section = (title, hint, cards, board) => `
@@ -459,6 +485,13 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
     display: grid; grid-template-columns: 36px 1fr; gap: 8px;
     background: #141a22; border: 1px solid var(--line); border-radius: 10px; padding: 8px 10px;
   }
+  .row.fade { border-color: rgba(226,85,85,.55); background: rgba(226,85,85,.08); box-shadow: inset 3px 0 0 #e25555; }
+  .pill.fade-pill { background: rgba(226,85,85,.2); color: #ff9b9b; border-color: rgba(226,85,85,.5); font-weight: 700; }
+  .fade-banner {
+    margin: 7px 0 2px; padding: 7px 9px; border-radius: 8px;
+    background: rgba(226,85,85,.16); border: 1px solid rgba(226,85,85,.45);
+    color: #ffc0c0; font-size: 12.5px; font-weight: 700; line-height: 1.5;
+  }
   .row-idx {
     font-size: 13px; font-weight: 700; color: var(--accent);
     display: flex; align-items: flex-start; justify-content: center; padding-top: 2px;
@@ -471,6 +504,12 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
     white-space: nowrap;
   }
   .pill.soft { background: #243041; color: #9eb0c5; border-color: var(--line); }
+  .pill.cap-inst { background: rgba(61,139,253,.18); color: #9ec1ff; border-color: rgba(61,139,253,.45); }
+  .pill.cap-hot { background: rgba(226,85,85,.16); color: #ffb0b0; border-color: rgba(226,85,85,.4); }
+  .pill.cap-mixed { background: rgba(214,162,58,.14); color: #ffd9a0; border-color: rgba(214,162,58,.35); }
+  .meta.capital.cap-inst { border-color: rgba(61,139,253,.35); color: #c5dbff; }
+  .meta.capital.cap-hot { border-color: rgba(226,85,85,.35); color: #ffc0c0; }
+  .meta.capital.cap-mixed { border-color: rgba(214,162,58,.3); color: #ffe0b0; }
   .quote { font-size: 13px; white-space: nowrap; }
   .quote b { font-size: 15px; }
   .up { color: #ff6b6b; } .down { color: #3dd68c; }
@@ -576,6 +615,7 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
   .freshness b { margin-right: 6px; }
   .freshness.ok { color: var(--muted); background: rgba(31,170,110,.08); border-color: rgba(31,170,110,.28); }
   .freshness.stale { color: #ffd9a0; background: rgba(214,162,58,.12); border-color: rgba(214,162,58,.45); }
+  ${strengthCss}
 </style>
 </head>
 <body>
@@ -624,7 +664,11 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
       isCustom
         ? section(
             `自选股明细（${customCards.length}）`,
-            '对照综合选股五套算法打标签 · 含乖离/MACD · 雪球大V(粉丝≥4000)',
+            `${
+              custom?.faded?.length
+                ? `⚠ 动能转弱 ${custom.faded.length} 只已用红框标出，未剔除。`
+                : ''
+            }对照综合选股五套算法打标签 · 含乖离/MACD · 雪球大V(粉丝≥4000)`,
             customCards,
             '自选'
           )
@@ -633,13 +677,17 @@ export function renderHtmlReport({ meta, brief, modules, shortTerm, turnaround, 
             taoPickHtml(shortTerm),
             section(
               '模块一 · 正股（纯技术 + 顺向火车轨/火车每日观察/蓝色钻石）',
-              `候选 ${plain.length}/15 · 乖离/MACD + 陶博士RPS选股`,
+              `候选 ${plain.length}/15 · 乖离/MACD + 陶博士RPS选股${
+                shortTerm?.excludedFade ? ` · 动能转弱已剔除 ${shortTerm.excludedFade}` : ''
+              }`,
               plain,
               '正股'
             ),
             section(
               '模块二 · ST股（不含正股）',
-              `候选 ${stList.length}/15 · 含进展/买卖价/乖离/MACD/雪球大V`,
+              `候选 ${stList.length}/15 · 含进展/买卖价/乖离/MACD/雪球大V${
+                turnaround?.excludedFade ? ` · 动能转弱已剔除 ${turnaround.excludedFade}` : ''
+              }`,
               stList,
               'ST'
             ),

@@ -169,6 +169,7 @@ export function computeIndicators(klines) {
   const { dif, dea, hist } = macd(closes);
   const { k, d, j } = kdj(klines);
   const rsi6 = rsi(closes, 6);
+  const rsi14 = rsi(closes, 14);
   const i = closes.length - 1;
   const prev = i - 1;
 
@@ -280,6 +281,7 @@ export function computeIndicators(klines) {
     ma20: ma20[i],
     ma5Rising: isMaRising(ma5),
     ma10Rising: isMaRising(ma10),
+    ma20Rising: isMaRising(ma20),
     bullAlign: ma5[i] != null && ma10[i] != null && ma20[i] != null && ma5[i] > ma10[i] && ma10[i] > ma20[i],
     aboveMa5: ma5[i] != null && price >= ma5[i],
     brokenMa5: ma5[i] != null && price < ma5[i],
@@ -302,6 +304,7 @@ export function computeIndicators(klines) {
     kdjGolden,
     kdjAbove50: k[i] != null && k[i] >= 50,
     rsi6: rsi6[i],
+    rsi14: rsi14[i],
     gentleVolume: isGentleVolumeExpansion(volumes),
     unstableTrend: hasUnstableCross(ma5, ma10, 10),
     limitUpStreak: consecutiveLimitUps(klines, 5),

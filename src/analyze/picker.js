@@ -9,6 +9,8 @@
 
 import { countBases } from './tao.js';
 import { sma } from './indicators.js';
+import { estimateChipConcentration } from './marketMeta.js';
+import { buildStrengthVerdict, momentumFade } from './strengthVerdict.js';
 
 /**
  * 五套算法，order 即用户给定的优先级（1 最高）
@@ -613,6 +615,7 @@ export function pickTopStocks(allScored = [], { tape = null, boards = null, limi
   const rows = [];
   const strategyCount = {};
   let excludedCrash = 0;
+  let excludedFade = 0;
 
   for (const s of allScored) {
     if (!s?.stock) continue;
@@ -621,6 +624,12 @@ export function pickTopStocks(allScored = [], { tape = null, boards = null, limi
     // 当日大跌的票不该出现在「今天可买入」的清单里
     if (num(s.stock.changePct) != null && s.stock.changePct <= CRASH_DROP_PCT) {
       excludedCrash++;
+      continue;
+    }
+
+    const fade = momentumFade(s.ind);
+    if (fade.fade) {
+      excludedFade++;
       continue;
     }
 
@@ -665,6 +674,8 @@ export function pickTopStocks(allScored = [], { tape = null, boards = null, limi
       changePct: s.stock.changePct,
       turnover: num(s.stock.turnover),
       volumeRatio: num(s.stock.volumeRatio),
+      amplitude: num(s.stock.amplitude),
+      circMV: num(s.stock.circMV),
       amount: s.stock.amount,
       industry: s.stock.industry || '未知行业',
       mainNetInflow: s.stock.mainNetInflow || 0,
@@ -706,6 +717,16 @@ export function pickTopStocks(allScored = [], { tape = null, boards = null, limi
       entry,
       buyReasons: reasons,
       riskNotes: risks,
+      strength: buildStrengthVerdict({
+        klines: s.klines || [],
+        ind,
+        stock: s.stock,
+        chips: estimateChipConcentration(s.klines || []),
+        fundFlow: {
+          mainNetInflow: s.stock.mainNetInflow || 0,
+          mainNetInflowPct: s.stock.mainNetInflowPct || 0,
+        },
+      }),
       taoTags: s.taoTags || [],
     });
   }
@@ -717,6 +738,7 @@ export function pickTopStocks(allScored = [], { tape = null, boards = null, limi
     picks,
     qualified: rows.length,
     excludedCrash,
+    excludedFade,
     buyCount: picks.filter((p) => p.actionLevel === 'buy').length,
     waitCount: picks.filter((p) => p.actionLevel === 'wait').length,
     strategyCount,

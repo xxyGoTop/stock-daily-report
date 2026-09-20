@@ -26,6 +26,7 @@ import { getDataFreshness } from './crawl/eastmoney.js';
 import { attachXueqiuOpinions } from './crawl/xueqiu.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { attachMarketMeta } from './analyze/marketMeta.js';
+import { attachStrengthVerdict, formatStrengthLines } from './analyze/strengthVerdict.js';
 import { attachThemeExpect } from './analyze/themeExpect.js';
 import { fetchTodayHotNews } from './crawl/hotNews.js';
 import { openInBrowser } from './output/open.js';
@@ -137,6 +138,7 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
     codes: customRaw.codes,
     season: customRaw.season,
     candidates: customRaw.candidates,
+    faded: customRaw.faded || [],
     scanned: customRaw.scanned,
     scoredCount: customRaw.scoredCount,
   };
@@ -174,6 +176,9 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
   const textLines = [
     `自选股分析 ${meta.generatedAt}`,
     `代码：${custom.codes.join(', ')}`,
+    custom.faded?.length
+      ? `⚠ 动能转弱 ${custom.faded.length} 只（已保留并标出）：${custom.faded.map((d) => `${d.name}(${d.reason})`).join('；')}`
+      : '',
     '',
     '【今日热点新闻】',
     ...(hotNews.length
@@ -183,7 +188,8 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
     ...custom.candidates.map((c, i) => {
       const sb = c.signalBoard || {};
       return (
-        `${i + 1}. ${c.code} ${c.name} [${c.direction}] ${c.action}\n` +
+        `${i + 1}. ${c.code} ${c.name} [${c.direction}] ${c.action}` +
+        `${c.momentumFade?.fade ? `  ⚠动能转弱：${c.momentumFade.reason}` : ''}\n` +
         `   策略：${
           c.primaryName
             ? `主策略 ${c.primaryName}`
@@ -200,12 +206,18 @@ async function runCustomMode(args, labels, outDir, dateFolder) {
             : ''
         }\n` +
         `   ${sb.biasText || ''}｜${sb.macdText || ''}\n` +
+        `${c.capital ? `   ${c.capital.text}${c.capital.note ? `　${c.capital.note}` : ''}\n` : ''}` +
         `   ${c.themeExpect || ''}\n` +
         `   ${c.moveReason || ''}\n` +
         `   买 ${c.buyPrice}｜止损 ${c.sellStop != null ? Number(c.sellStop).toFixed(2) : c.sellPrice}\n` +
         `   止盈价 ${c.takeProfitText || '-'}｜目标价 ${c.profitTargetText || '-'}\n` +
         `   进展 ${c.progress}｜窗口 ${c.expectWindow}\n` +
-        `   买因：${c.buyReason}\n   卖因：${c.sellReason}`
+        `   买因：${c.buyReason}\n   卖因：${c.sellReason}` +
+        (c.strength
+          ? `\n   ${formatStrengthLines(c.strength)
+              .map((l) => l)
+              .join('\n   ')}`
+          : '')
       );
     }),
   ];
@@ -250,7 +262,10 @@ async function main() {
       lookbackDays: 200,
       onProgress: progress,
     });
-    console.log(`  √ 事件池 ${turnRaw.candidates.length} 只 · ${turnRaw.season.label}\n`);
+    console.log(
+      `  √ 事件池 ${turnRaw.candidates.length} 只 · ${turnRaw.season.label}` +
+        `${turnRaw.excludedFade ? `（动能转弱剔除 ${turnRaw.excludedFade}）` : ''}\n`
+    );
   }
 
   // 指数中期信号先算：陶博士 241005 提醒「一年新高」在无中期信号时多为假突破
@@ -268,7 +283,10 @@ async function main() {
       fast: args.fast,
       onProgress: progress,
     });
-    console.log(`  √ 正股 ${shortRaw.candidates.length} 只\n`);
+    console.log(
+      `  √ 正股 ${shortRaw.candidates.length} 只` +
+        `${shortRaw.excludedFade ? `（动能转弱剔除 ${shortRaw.excludedFade}）` : ''}\n`
+    );
   }
 
   const shortTerm = shortRaw
@@ -280,6 +298,7 @@ async function main() {
         ops: shortRaw.ops,
         observeFirstPage: shortRaw.observeFirstPage || [],
         observeHitCount: shortRaw.observeHitCount || 0,
+        excludedFade: shortRaw.excludedFade || 0,
         hotBoards: shortRaw.hotBoards || [],
         actions: summarizeShortTermActions(shortRaw),
       }
@@ -290,6 +309,7 @@ async function main() {
         season: turnRaw.season,
         announcementHits: turnRaw.announcementHits,
         rankedCount: turnRaw.rankedCount,
+        excludedFade: turnRaw.excludedFade || 0,
         candidates: turnRaw.candidates,
         ops: turnRaw.ops,
         actions: summarizeTurnaroundActions(turnRaw),
@@ -317,7 +337,11 @@ async function main() {
   for (const s of shortRaw?.allScored || []) {
     if (s.stock?.code && s.klines?.length) codeKlines[s.stock.code] = s.klines;
   }
+  for (const [code, kl] of Object.entries(turnRaw?.codeKlines || {})) {
+    if (kl?.length) codeKlines[code] = kl;
+  }
   await attachMarketMeta(metaCards, { codeKlines, onProgress: progress });
+  attachStrengthVerdict(metaCards, codeKlines);
 
   // 雪球：优先覆盖 ST + 事件 + 正股前若干
   const xqTargets = [
@@ -431,6 +455,7 @@ function emptyShort() {
     ops: { buy: [], holdWatch: [], sell: [] },
     observeFirstPage: [],
     observeHitCount: 0,
+    excludedFade: 0,
     hotBoards: [],
     actions: { today: [], tomorrow: [] },
   };
@@ -441,6 +466,7 @@ function emptyTurn() {
     season: null,
     announcementHits: 0,
     rankedCount: 0,
+    excludedFade: 0,
     candidates: [],
     ops: { focus: [], watch: [], avoid: [] },
     actions: { today: [], tomorrow: [] },

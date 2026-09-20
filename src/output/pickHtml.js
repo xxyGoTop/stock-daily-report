@@ -17,6 +17,7 @@ import {
   pctClass,
   htmlShell,
 } from './theme.js';
+import { strengthCss, strengthHtml } from './strengthHtml.js';
 
 const extraCss = `
   /* 综合选股页比日报宽：指数+板块左右并排才读得开 */
@@ -155,6 +156,21 @@ const extraCss = `
   .pager button:hover:not(:disabled) { border-color: var(--accent); }
   .pager button.on { background: rgba(61,139,253,.22); color: #9ec1ff; border-color: rgba(61,139,253,.5); }
   .pager button:disabled { opacity: .4; cursor: default; }
+  ${strengthCss}
+  .pick .sv { margin-top: 10px; }
+  .pill.cap-inst { background: rgba(61,139,253,.18); color: #9ec1ff; border-color: rgba(61,139,253,.45); }
+  .pill.cap-hot { background: rgba(226,85,85,.16); color: #ffb0b0; border-color: rgba(226,85,85,.4); }
+  .pill.cap-mixed { background: rgba(214,162,58,.14); color: #ffd9a0; border-color: rgba(214,162,58,.35); }
+  .cap-line {
+    display: flex; flex-wrap: wrap; gap: 6px 12px; align-items: baseline;
+    margin-top: 8px; padding: 6px 9px; border-radius: 8px; font-size: 12px;
+    border: 1px solid var(--line); background: #141a22; color: #d5deea;
+  }
+  .cap-line b { font-weight: 700; }
+  .cap-line em { font-style: normal; color: var(--muted); font-size: 11px; }
+  .cap-line.cap-inst { border-color: rgba(61,139,253,.35); background: rgba(61,139,253,.08); }
+  .cap-line.cap-hot { border-color: rgba(226,85,85,.35); background: rgba(226,85,85,.08); }
+  .cap-line.cap-mixed { border-color: rgba(214,162,58,.3); background: rgba(214,162,58,.07); }
 `;
 
 // 页内脚本：策略筛选 + 分页。刻意不用模板字符串，避免与外层模板语法冲突。
@@ -486,7 +502,21 @@ function pickCard(p, rank) {
     <div class="pick-tags">
       <span class="pill">主策略：${esc(p.primaryName)}</span>
       ${tags}${baseTag}${extraTags}
+      ${
+        p.capital
+          ? `<span class="pill cap-${esc(p.capital.kind)}">${esc(p.capital.kindLabel)}</span>`
+          : ''
+      }
     </div>
+    ${
+      p.capital
+        ? `<div class="cap-line cap-${esc(p.capital.kind)}"><b>${esc(p.capital.instText)}</b>${
+            p.capital.mainText ? `<span>${esc(p.capital.mainText)}</span>` : ''
+          }${p.capital.bigText ? `<span>${esc(p.capital.bigText)}</span>` : ''}${
+            p.capital.note ? `<em>${esc(p.capital.note)}</em>` : ''
+          }</div>`
+        : ''
+    }
 
     <div class="pick-body">
       <div class="plan">
@@ -523,6 +553,7 @@ function pickCard(p, rank) {
       <span>MA5 ${fmtPrice(p.ma5)} / MA10 ${fmtPrice(p.ma10)} / MA20 ${fmtPrice(p.ma20)}</span>
       ${p.bias5 != null ? `<span>乖离 ${p.bias5 >= 0 ? '+' : ''}${p.bias5.toFixed(1)}%</span>` : ''}
     </div>
+    ${strengthHtml(p.strength)}
   </div>`;
 }
 
@@ -564,6 +595,7 @@ function picksSection(result, strategies, limit) {
         全池满足算法硬条件的共 ${result.qualified} 只，按综合评分取前 ${Math.min(limit, picks.length)}：
         其中现价就在买入区间内的 ${result.buyCount} 只、需等价格回到区间的 ${result.waitCount} 只，其余仅作观察。
         ${result.excludedCrash ? `另有 ${result.excludedCrash} 只因当日跌幅过大已剔除。` : ''}
+        ${result.excludedFade ? `动能转弱（RSI＜50 / MACD绿柱或红柱缩短）已剔除 ${result.excludedFade} 只。` : ''}
         点策略标签可只看该算法命中的标的；每页 10 只。
       </div>
     </div>

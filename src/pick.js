@@ -19,8 +19,10 @@ import { analyzeBoardStrength } from './analyze/boardStrength.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { analyzeMarketTape } from './analyze/marketTape.js';
 import { pickTopStocks, STRATEGIES } from './analyze/picker.js';
+import { formatStrengthLines } from './analyze/strengthVerdict.js';
 import { assessDataFreshness, sessionPhase } from './analyze/session.js';
 import { getDataFreshness } from './crawl/eastmoney.js';
+import { attachCapitalStyle } from './analyze/marketMeta.js';
 import { renderPickHtml, savePickHtml } from './output/pickHtml.js';
 import { openInBrowser } from './output/open.js';
 import { runShortTermStrategy } from './strategy/shortTerm.js';
@@ -107,11 +109,16 @@ function printConsole({ tape, indexSignals, boards, result, freshness, limit }) 
   p(
     `【评分前 ${Math.min(limit, result.picks.length)} 只】（全池达标 ${result.qualified} 只｜` +
       `现价可买 ${result.buyCount}　等价格 ${result.waitCount}` +
-      `${result.excludedCrash ? `　当日大跌剔除 ${result.excludedCrash}` : ''}）`
+      `${result.excludedCrash ? `　当日大跌剔除 ${result.excludedCrash}` : ''}` +
+      `${result.excludedFade ? `　动能转弱剔除 ${result.excludedFade}` : ''}）`
   );
   line();
   if (!result.picks.length) {
-    p('  今日没有个股满足任一算法的硬条件——没有符合的标的就不该硬凑。');
+    p(
+      result.excludedFade
+        ? '  今日达标标的均因动能转弱（RSI＜50 / MACD绿柱或红柱缩短）已剔除。'
+        : '  今日没有个股满足任一算法的硬条件——没有符合的标的就不该硬凑。'
+    );
   }
   for (let i = 0; i < result.picks.length; i++) {
     const x = result.picks[i];
@@ -121,12 +128,16 @@ function printConsole({ tape, indexSignals, boards, result, freshness, limit }) 
       )}分  [${x.action}]  ${x.baseLabel}`
     );
     p(`    命中：${x.strategies.map((s) => s.short).join(' + ')}｜主策略：${x.primaryName}｜${x.industry}`);
+    if (x.capital) p(`    ${x.capital.text}${x.capital.note ? `　${x.capital.note}` : ''}`);
     p(
       `    买入：${x.entry.buyLow}~${x.entry.buyHigh}（${x.entry.entryType}·${x.entry.entryMode}）` +
         ` 止损 ${x.entry.stop}（空间${x.entry.riskPct}%）　止盈价 ${x.entry.target1}（先减半）　目标价 ${x.entry.target2}（余仓盈利卖出，盈亏比${x.entry.rr}）`
     );
     for (const r of x.buyReasons.slice(0, 3)) p(`    ${r}`);
     for (const r of x.riskNotes.slice(0, 2)) p(`    ! ${r}`);
+    if (x.strength) {
+      for (const line of formatStrengthLines(x.strength)) p(`    ${line}`);
+    }
     p('');
   }
 }
@@ -204,6 +215,7 @@ async function main() {
     limit: args.limit,
   });
   progress(`达标 ${result.qualified} 只，取前 ${Math.min(args.limit, result.picks.length)}`);
+  await attachCapitalStyle(result.picks, { onProgress: progress });
 
   printConsole({ tape, indexSignals, boards, result, freshness, limit: args.limit });
 

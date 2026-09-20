@@ -23,6 +23,7 @@ import {
   applyTaoBoost,
 } from '../analyze/tao.js';
 import { describeFundFlow, estimateChipConcentration } from '../analyze/marketMeta.js';
+import { buildStrengthVerdict, keepMomentum } from '../analyze/strengthVerdict.js';
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -190,12 +191,22 @@ function enrichTechCard(s, tag = '买入') {
     changePct: s.stock.changePct,
     volumeRatio: s.stock.volumeRatio,
     turnover: s.stock.turnover,
+    amplitude: s.stock.amplitude,
+    circMV: s.stock.circMV,
+    limitUpStreak: s.ind?.limitUpStreak || 0,
     industry: s.stock.industry || '未知行业',
     region: s.stock.region || '',
     mainNetInflow: s.stock.mainNetInflow || 0,
     mainNetInflowPct: s.stock.mainNetInflowPct || 0,
     fundFlow,
     chips,
+    strength: buildStrengthVerdict({
+      klines: s.klines || [],
+      ind: s.ind,
+      stock: s.stock,
+      chips,
+      fundFlow,
+    }),
     direction,
     category: taoTags.includes('率先年新高')
       ? '率先年新高'
@@ -289,6 +300,17 @@ function enrichEventCard(row) {
     buyPrice: prices.buyPrice,
     sellPrice: prices.sellPrice,
     ...takeProfitFields(prices),
+    strength: buildStrengthVerdict({
+      klines: row.klines || [],
+      ind: row.ind || null,
+      stock: {
+        price: row.latest?.close ?? row.quote?.price,
+        changePct: row.latest?.changePct ?? row.quote?.changePct,
+        turnover: row.latest?.turnover ?? row.quote?.turnover,
+        mainNetInflow: row.quote?.mainNetInflow || 0,
+        mainNetInflowPct: row.quote?.mainNetInflowPct || 0,
+      },
+    }),
     buyReason: `${progress.progressText}。${prices.buyReason}`,
     sellReason: prices.sellReason,
     techEntry: prices.techEntry,
@@ -414,11 +436,15 @@ export async function runShortTermStrategy({
   );
 
   const ops = buildShortTermOps(scored);
-  let techList = ops.buy.slice(0, maxCandidates);
+  let excludedFade = 0;
+  for (const s of scored) {
+    if (s.ind && !keepMomentum(s.ind)) excludedFade++;
+  }
+  let techList = ops.buy.filter((x) => keepMomentum(x.ind)).slice(0, maxCandidates);
 
   // 陶博士命中优先补入候选：当日涨幅榜第一版优先，避免向全市场扩散
   const taoHits = scored
-    .filter((x) => (x.taoTags || []).length && !x.veto?.length)
+    .filter((x) => (x.taoTags || []).length && !x.veto?.length && keepMomentum(x.ind))
     .sort(
       (a, b) =>
         (b.inFirstPage ? 1 : 0) - (a.inFirstPage ? 1 : 0) ||
@@ -433,7 +459,7 @@ export async function runShortTermStrategy({
 
   if (techList.length < maxCandidates) {
     const extra = ops.holdWatch
-      .filter((x) => x.score >= 40 && !x.ind.brokenMa5)
+      .filter((x) => x.score >= 40 && !x.ind.brokenMa5 && keepMomentum(x.ind))
       .slice(0, maxCandidates - techList.length)
       .map((x) => ({ ...x, fillFromWatch: true }));
     techList = techList.concat(extra);
@@ -459,8 +485,9 @@ export async function runShortTermStrategy({
     sellCards,
     eventCards: [],
     // 241005：当天交易日的每日观察涨幅榜第一版（不向后续版面扩散）
-    observeFirstPage: firstPage.map((s) => enrichTechCard(s, '买入')),
+    observeFirstPage: firstPage.filter((s) => keepMomentum(s.ind)).map((s) => enrichTechCard(s, '买入')),
     observeHitCount: observeHits.length,
+    excludedFade,
     hotBoards: boardIndex.boards.filter((b) => b.rps5 >= 90).slice(0, 12),
     taoHits: taoHits.slice(0, 20).map((s) => enrichTechCard(s, '买入')),
     ops: {

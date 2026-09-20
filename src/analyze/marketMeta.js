@@ -72,7 +72,7 @@ export async function fetchIndustryFundMap(codes = []) {
   const map = new Map();
   if (!want.length) return map;
 
-  const fields = 'f12,f14,f100,f102,f103,f62,f184,f66,f72';
+  const fields = 'f12,f14,f21,f100,f102,f103,f62,f184,f66,f69,f72,f75';
 
   const readDiff = (data) => {
     for (const item of data?.data?.diff || []) {
@@ -85,10 +85,13 @@ export async function fetchIndustryFundMap(codes = []) {
           .map((s) => s.trim())
           .filter(Boolean)
           .slice(0, 8),
+        circMV: num(item.f21),
         mainNetInflow: num(item.f62),
         mainNetInflowPct: num(item.f184),
         superNetInflow: num(item.f66),
+        superNetInflowPct: num(item.f69),
         bigNetInflow: num(item.f72),
+        bigNetInflowPct: num(item.f75),
         fundKnown: true,
       });
     }
@@ -312,7 +315,10 @@ export async function attachMarketMeta(cards, { codeKlines = {}, onProgress } = 
       known: known || inflow != null,
     });
     c.superNetInflow = info.superNetInflow ?? c.superNetInflow ?? null;
+    c.superNetInflowPct = info.superNetInflowPct ?? c.superNetInflowPct ?? null;
     c.bigNetInflow = info.bigNetInflow ?? c.bigNetInflow ?? null;
+    c.bigNetInflowPct = info.bigNetInflowPct ?? c.bigNetInflowPct ?? null;
+    if (info.circMV) c.circMV = info.circMV;
     const kl = codeKlines[code] || codeKlines[c.code] || c.klines || [];
     const chips =
       kl.length >= 20
@@ -326,6 +332,143 @@ export async function attachMarketMeta(cards, { codeKlines = {}, onProgress } = 
     c.mainNetInflowPct = pct;
     c.fundFlow = fundFlow;
     c.chips = chips;
+    c.capital = classifyCapitalStyle(c);
+  }
+  return cards;
+}
+
+function signedMoney(n) {
+  if (n == null || !Number.isFinite(+n)) return '-';
+  return fmtYi(n);
+}
+
+function absMoney(n) {
+  if (n == null || !Number.isFinite(+n)) return '-';
+  return fmtYi(Math.abs(n)).replace(/^\+/, '');
+}
+
+/**
+ * 机构股 / 游资博弈股 + 机构（超大单）净买入
+ * 超大单≈机构大单；换手、流通市值、振幅辅助定性
+ */
+export function classifyCapitalStyle(c = {}) {
+  const turn = Number.isFinite(+c.turnover) ? +c.turnover : null;
+  const circ = Number.isFinite(+c.circMV) ? +c.circMV : null;
+  const amp = Number.isFinite(+c.amplitude) ? +c.amplitude : null;
+  const vr = Number.isFinite(+c.volumeRatio) ? +c.volumeRatio : null;
+  const superIn = c.superNetInflow != null && Number.isFinite(+c.superNetInflow) ? +c.superNetInflow : null;
+  const bigIn = c.bigNetInflow != null && Number.isFinite(+c.bigNetInflow) ? +c.bigNetInflow : null;
+  const main = c.mainNetInflow != null && Number.isFinite(+c.mainNetInflow) ? +c.mainNetInflow : null;
+  const superPct = c.superNetInflowPct != null && Number.isFinite(+c.superNetInflowPct) ? +c.superNetInflowPct : null;
+  const limit = Number(c.limitUpStreak) || 0;
+
+  let inst = 0;
+  let hot = 0;
+  const hints = [];
+
+  if (circ != null && circ >= 200e8) {
+    inst += 2;
+    hints.push('流通市值偏大');
+  } else if (circ != null && circ >= 80e8) {
+    inst += 1;
+  } else if (circ != null && circ > 0 && circ < 40e8) {
+    hot += 2;
+    hints.push('流通盘偏小');
+  } else if (circ != null && circ < 80e8) {
+    hot += 1;
+  }
+
+  if (turn != null) {
+    if (turn <= 4) {
+      inst += 2;
+      hints.push(`换手${turn.toFixed(1)}%偏低`);
+    } else if (turn <= 8) inst += 1;
+    else if (turn >= 18) {
+      hot += 2;
+      hints.push(`换手${turn.toFixed(1)}%偏高`);
+    } else if (turn >= 12) hot += 1;
+  }
+
+  if (amp != null && amp >= 9) {
+    hot += 1;
+    hints.push(`振幅${amp.toFixed(1)}%`);
+  }
+  if (vr != null && vr >= 2.8) hot += 1;
+  if (limit >= 1) {
+    hot += 2;
+    hints.push('涨停博弈');
+  }
+
+  if (superIn != null && superIn > 2e6) {
+    inst += 1;
+    hints.push('超大单净买');
+  } else if (superIn != null && superIn < -2e6 && (turn == null || turn >= 8)) {
+    hot += 1;
+  }
+
+  let kind = 'mixed';
+  let kindLabel = '机构/游资混合';
+  if (inst >= hot + 1 && inst >= 2) {
+    kind = 'inst';
+    kindLabel = '机构股';
+  } else if (hot >= inst + 1 && hot >= 2) {
+    kind = 'hot';
+    kindLabel = '游资博弈股';
+  }
+
+  let instText = '机构净买入：超大单未取到';
+  if (superIn != null) {
+    const pct = superPct != null ? `，占成交 ${superPct >= 0 ? '+' : ''}${superPct.toFixed(2)}%` : '';
+    instText =
+      superIn >= 0
+        ? `机构净买入 ${signedMoney(superIn)}（超大单${pct}）`
+        : `机构净卖出 ${absMoney(superIn)}（超大单${pct}）`;
+  }
+
+  const mainText =
+    main == null ? '' : `主力${main >= 0 ? '净买' : '净卖'} ${absMoney(main)}`;
+  const bigText =
+    bigIn == null ? '' : `大单${bigIn >= 0 ? '净买' : '净卖'} ${absMoney(bigIn)}`;
+
+  return {
+    kind,
+    kindLabel,
+    instNet: superIn,
+    instNetPct: superPct,
+    bigNet: bigIn,
+    mainNet: main,
+    instText,
+    mainText,
+    bigText,
+    note: hints.slice(0, 3).join('，'),
+    text: `${kindLabel} · ${instText}${mainText ? `｜${mainText}` : ''}`,
+  };
+}
+
+/** 只补资金结构与机构/游资标签（pick 用，不重算筹码） */
+export async function attachCapitalStyle(cards, { onProgress } = {}) {
+  if (!cards?.length) return cards;
+  const codes = [...new Set(cards.map((c) => String(c.code).padStart(6, '0')))];
+  onProgress?.(`标记机构/游资与超大单净买入（${codes.length} 只）...`);
+  let map = new Map();
+  try {
+    map = await fetchIndustryFundMap(codes);
+  } catch {
+    map = new Map();
+  }
+  for (const c of cards) {
+    const code = String(c.code).padStart(6, '0');
+    const info = map.get(code) || {};
+    if (info.fundKnown) {
+      c.mainNetInflow = info.mainNetInflow ?? c.mainNetInflow;
+      c.mainNetInflowPct = info.mainNetInflowPct ?? c.mainNetInflowPct;
+      c.superNetInflow = info.superNetInflow;
+      c.superNetInflowPct = info.superNetInflowPct;
+      c.bigNetInflow = info.bigNetInflow;
+      c.bigNetInflowPct = info.bigNetInflowPct;
+      if (info.circMV) c.circMV = info.circMV;
+    }
+    c.capital = classifyCapitalStyle(c);
   }
   return cards;
 }
