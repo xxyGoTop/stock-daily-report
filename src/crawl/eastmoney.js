@@ -5,6 +5,18 @@
 
 import { cleanStockName, readResponseText } from './decode.js';
 import { fetchTencentDepth } from './tencent.js';
+import {
+  fetchActiveStocksSina,
+  fetchQuotesFallback,
+  fetchMarketBreadthSina,
+  fetchStrongCountSina,
+  fetchMarketClockFallback,
+  noteListSource,
+  noteQuoteSource,
+  getFallbackSources,
+} from './fallback.js';
+
+export { getFallbackSources };
 
 const UA =
   'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36';
@@ -93,8 +105,24 @@ export function toMarketSymbol(code, market) {
 /**
  * 拉取活跃正股列表（排除退市整理、债券等）
  * fields: 代码/名称/最新价/涨跌幅/量比/换手/成交额/振幅/市值 等
+ *
+ * 东财 push2 断联时降级新浪行情中心（无主力净流入/行业，技术面够用）
  */
 export async function fetchActiveStocks({ pages = 8, pageSize = 100, fid = 'f6' } = {}) {
+  try {
+    const all = await fetchActiveStocksEm({ pages, pageSize, fid });
+    if (all.length) {
+      noteListSource('eastmoney');
+      return all;
+    }
+    throw new Error('东财返回空列表');
+  } catch (err) {
+    console.error(`  · 东财股票列表不可用（${err.message || err}），降级新浪行情中心…`);
+    return fetchActiveStocksSina({ pages, pageSize });
+  }
+}
+
+async function fetchActiveStocksEm({ pages = 8, pageSize = 100, fid = 'f6' } = {}) {
   const fields =
     'f12,f13,f14,f2,f3,f4,f5,f6,f7,f8,f9,f10,f15,f16,f17,f18,f20,f21,f22,f23,f62,f100,f102,f184';
   // A股：沪深主板+创业板+科创板
@@ -324,26 +352,46 @@ export async function fetchIndexRealtime(items = []) {
       /* next host */
     }
   }
-  if (!list.length) return [];
 
-  const byCode = new Map(
-    list.map((x) => [
-      String(x.f12 || '').padStart(6, '0'),
-      {
-        price: num(x.f2),
-        changePct: num(x.f3),
-        volume: num(x.f5),
-        amount: num(x.f6),
-        liveName: cleanStockName(x.f14),
-      },
-    ])
-  );
+  if (list.length) {
+    noteQuoteSource('eastmoney');
+    const byCode = new Map(
+      list.map((x) => [
+        String(x.f12 || '').padStart(6, '0'),
+        {
+          price: num(x.f2),
+          changePct: num(x.f3),
+          volume: num(x.f5),
+          amount: num(x.f6),
+          liveName: cleanStockName(x.f14),
+        },
+      ])
+    );
 
+    return items
+      .map((it) => {
+        const hit = byCode.get(String(it.code).padStart(6, '0'));
+        if (!hit) return null;
+        return { ...it, name: it.name || hit.liveName, ...hit };
+      })
+      .filter(Boolean);
+  }
+
+  // 东财 ulist 全挂 → 腾讯 / 新浪批量行情
+  console.error('  · 东财指数实时不可用，降级腾讯/新浪报价…');
+  const map = await fetchQuotesFallback(items);
   return items
     .map((it) => {
-      const hit = byCode.get(String(it.code).padStart(6, '0'));
+      const hit = map.get(String(it.code).padStart(6, '0'));
       if (!hit) return null;
-      return { ...it, name: it.name || hit.liveName, ...hit };
+      return {
+        ...it,
+        name: it.name || hit.name,
+        price: hit.price,
+        changePct: hit.changePct,
+        volume: hit.volume,
+        amount: hit.amount,
+      };
     })
     .filter(Boolean);
 }
@@ -414,7 +462,7 @@ export async function fetchStockSnapshots(codes = []) {
  * 全市场涨跌家数
  *
  * 不逐页扫 5000 只股票：沪深两条综合指数的 f104/f105/f106 就是交易所口径的
- * 上涨/下跌/平盘家数，一次请求即可。
+ * 上涨/下跌/平盘家数，一次请求即可。东财挂了再扫新浪全市场列表近似。
  */
 export async function fetchMarketBreadth() {
   const secids = ['1.000001', '0.399001'].join(',');
@@ -432,27 +480,32 @@ export async function fetchMarketBreadth() {
       /* next host */
     }
   }
-  if (!list.length) return null;
 
-  const detail = list.map((x) => ({
-    name: String(x.f14 || ''),
-    up: num(x.f104),
-    down: num(x.f105),
-    flat: num(x.f106),
-  }));
-  const up = detail.reduce((s, d) => s + d.up, 0);
-  const down = detail.reduce((s, d) => s + d.down, 0);
-  const flat = detail.reduce((s, d) => s + d.flat, 0);
-  const total = up + down + flat;
+  if (list.length) {
+    noteQuoteSource('eastmoney');
+    const detail = list.map((x) => ({
+      name: String(x.f14 || ''),
+      up: num(x.f104),
+      down: num(x.f105),
+      flat: num(x.f106),
+    }));
+    const up = detail.reduce((s, d) => s + d.up, 0);
+    const down = detail.reduce((s, d) => s + d.down, 0);
+    const flat = detail.reduce((s, d) => s + d.flat, 0);
+    const total = up + down + flat;
 
-  return {
-    up,
-    down,
-    flat,
-    total,
-    upRatio: total ? +(up / total).toFixed(3) : null,
-    detail,
-  };
+    return {
+      up,
+      down,
+      flat,
+      total,
+      upRatio: total ? +(up / total).toFixed(3) : null,
+      detail,
+    };
+  }
+
+  console.error('  · 东财涨跌家数不可用，降级新浪全市场扫表…');
+  return fetchMarketBreadthSina();
 }
 
 const POOL_UT = '7eea3edcaed734bea9cbfc24409ed989';
@@ -558,6 +611,7 @@ export async function fetchStrongCount({ maxPages = 8 } = {}) {
   let over5 = 0;
   let over7 = 0;
   let scanned = 0;
+  let emOk = false;
 
   for (let pn = 1; pn <= maxPages; pn++) {
     let list = [];
@@ -567,6 +621,7 @@ export async function fetchStrongCount({ maxPages = 8 } = {}) {
         `&fs=${encodeURIComponent(fs)}&fields=f12,f14,f3`;
       const data = await fetchClist(query);
       list = data?.data?.diff || [];
+      emOk = true;
     } catch {
       break;
     }
@@ -584,7 +639,13 @@ export async function fetchStrongCount({ maxPages = 8 } = {}) {
     await sleep(150);
   }
 
-  return { over5, over7, scanned };
+  if (emOk && scanned > 0) {
+    noteQuoteSource('eastmoney');
+    return { over5, over7, scanned };
+  }
+
+  console.error('  · 东财强势股统计不可用，降级新浪…');
+  return fetchStrongCountSina({ maxPages });
 }
 
 /**
@@ -928,8 +989,8 @@ const KLINE_SOURCES = {
 /**
  * 实时行情时钟：判断市场行情已经走到哪一天。
  *
- * 走的是 push2 的单只行情接口，和三个K线接口都不是同一条链路——
- * K线源集体降级时它通常还活着，用来交叉验证K线是不是真的滞后了。
+ * 优先东财 push2 的单只行情接口；挂了再走腾讯/新浪上证时间字段。
+ * 和三个K线接口不是同一条链路，用来交叉验证K线是不是真的滞后了。
  */
 export async function fetchMarketClock() {
   for (const host of CLIST_HOSTS) {
@@ -941,6 +1002,7 @@ export async function fetchMarketClock() {
       if (!Number.isFinite(ts) || ts <= 0) continue;
       const d = new Date(ts * 1000);
       const pad = (n) => String(n).padStart(2, '0');
+      noteQuoteSource('eastmoney');
       return {
         date: `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`,
         time: `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`,
@@ -949,7 +1011,7 @@ export async function fetchMarketClock() {
       /* next host */
     }
   }
-  return null;
+  return fetchMarketClockFallback();
 }
 
 /**
@@ -1015,15 +1077,18 @@ export function resetKlineProbe() {
   for (const k of Object.keys(failStreak)) failStreak[k] = 0;
 }
 
-/** 报告用：K线基准交易日 + 实时行情日期（两条独立链路） */
+/** 报告用：K线基准交易日 + 实时行情日期（两条独立链路）+ 列表/报价源 */
 export async function getDataFreshness() {
   const p = await resolveProbe();
+  const fb = getFallbackSources();
   return {
     klineDate: p.klineDate,
     quoteDate: p.quoteDate,
     quoteTime: p.quoteTime,
     sources: p.sources,
     patchedIntraday: !!p.patchedIntraday,
+    listSource: fb.list,
+    quoteSource: fb.quote,
   };
 }
 
