@@ -7,6 +7,8 @@
  *   npm run 选股
  *   npm run pick -- --limit=20
  *   npm run pick -- --detail=300      扩大个股扫描池（更准但更慢）
+ *   npm run pick -- --board=创新药    限定行业/概念板块
+ *   npm run pick -- ST               风险警示板（ST股 BK0511）
  *   npm run pick -- --no-open
  */
 
@@ -18,6 +20,7 @@ import dayjs from 'dayjs';
 import { analyzeBoardStrength } from './analyze/boardStrength.js';
 import { analyzeIndexBuySignals } from './analyze/indexSignals.js';
 import { analyzeMarketTape } from './analyze/marketTape.js';
+import { extractBoardArg, resolveBoardUniverse } from './analyze/boardResolve.js';
 import { pickTopStocks, STRATEGIES } from './analyze/picker.js';
 import { formatStrengthLines } from './analyze/strengthVerdict.js';
 import { assessDataFreshness, sessionPhase } from './analyze/session.js';
@@ -31,6 +34,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
+  const { boardHint, rest } = extractBoardArg(argv);
   const args = {
     limit: 30,
     top: 10,
@@ -40,8 +44,9 @@ function parseArgs(argv) {
     noOpen: false,
     help: false,
     fast: false,
+    boardHint,
   };
-  for (const a of argv) {
+  for (const a of rest) {
     if (a === '--no-open') args.noOpen = true;
     else if (a === '--fast') {
       args.fast = true;
@@ -63,13 +68,13 @@ function fmtPct(v) {
   return `${+v >= 0 ? '+' : ''}${(+v).toFixed(2)}%`;
 }
 
-function printConsole({ tape, indexSignals, boards, result, freshness, limit }) {
+function printConsole({ tape, indexSignals, boards, result, freshness, limit, boardMeta }) {
   const p = (s = '') => console.log(s);
   const line = (ch = '─') => p(ch.repeat(66));
 
   p('');
   p('═'.repeat(66));
-  p(`综合选股 · ${tape.tradeDate} · ${tape.phase?.label || ''}`);
+  p(`综合选股 · ${tape.tradeDate} · ${tape.phase?.label || ''}${boardMeta ? ` · ${boardMeta.name}` : ''}`);
   p('═'.repeat(66));
   if (freshness) p(`${freshness.warn ? '⚠ 数据新鲜度' : '数据新鲜度'}：${freshness.text}`);
   p(`盘面：${tape.headline}`);
@@ -153,7 +158,12 @@ async function main() {
   npm run pick -- --fast         快速模式（少扫一些）
   npm run pick -- --detail=300   扩大个股扫描池（更准，更慢）
   npm run pick -- --concept      板块统计带上概念板块
+  npm run pick -- --board=创新药 限定在指定行业/概念成分内选股
+  npm run pick -- ST             同上，风险警示板（ST股）
+  npm run pick -- AI端侧         口语行业名也可直接跟在后面
   npm run pick -- --no-open      不自动打开浏览器
+
+行业示例：ST / 风险警示 / AI端侧 / 元件 / 消费电子 / 消费 / 创新药 / 半导体
 
 五套算法（按优先级）：
   1 率先一年新高（优先主流板块，重点看当日涨幅榜第一版）
@@ -169,6 +179,22 @@ async function main() {
   const now = dayjs();
   const progress = (m) => console.log(`  · ${m}`);
   console.log('\n[综合选股] 开始...');
+
+  let focusCodes = null;
+  let boardMeta = null;
+  if (args.boardHint) {
+    const uni = await resolveBoardUniverse(args.boardHint, {
+      limit: Math.max(args.detail, 60),
+      onProgress: progress,
+    });
+    if (!uni.board || !uni.codes.length) {
+      console.error(`未能解析板块「${args.boardHint}」，或成分股为空。可试：ST / 创新药 / 消费电子 / 元件 / AI端侧`);
+      process.exit(1);
+    }
+    boardMeta = uni.board;
+    focusCodes = uni.codes;
+    progress(`限定板块：${boardMeta.name}（${boardMeta.code}）· ${focusCodes.length} 只成分`);
+  }
 
   const phase = sessionPhase(now);
   progress(`时段：${phase.label} · ${phase.note}`);
@@ -202,9 +228,12 @@ async function main() {
   const strategy = await runShortTermStrategy({
     maxCandidates: Math.max(args.limit, 20),
     scanPages: args.pages,
-    detailLimit: args.detail,
+    detailLimit: focusCodes?.length ? Math.min(args.detail, focusCodes.length) : args.detail,
     indexCanBuy: indexSignals?.marketCanBuy ?? true,
     fast: args.fast,
+    focusCodes,
+    allowST: !!boardMeta?.allowST,
+    boardLabel: boardMeta?.name || '',
     onProgress: progress,
   });
 
@@ -217,7 +246,7 @@ async function main() {
   progress(`达标 ${result.qualified} 只，取前 ${Math.min(args.limit, result.picks.length)}`);
   await attachCapitalStyle(result.picks, { onProgress: progress });
 
-  printConsole({ tape, indexSignals, boards, result, freshness, limit: args.limit });
+  printConsole({ tape, indexSignals, boards, result, freshness, limit: args.limit, boardMeta });
 
   const meta = {
     generatedAt: now.format('YYYY-MM-DD HH:mm:ss'),
@@ -225,6 +254,9 @@ async function main() {
     limit: args.limit,
     scanned: strategy.scanned,
     scoredCount: strategy.scoredCount,
+    board: boardMeta
+      ? { code: boardMeta.code, name: boardMeta.name, hint: args.boardHint, count: focusCodes?.length || 0 }
+      : null,
   };
 
   const html = renderPickHtml({

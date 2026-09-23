@@ -8,6 +8,7 @@ import {
   fetchKlines,
   fetchBoardRps5,
   fetchMarketReturns,
+  fetchStockSnapshots,
 } from '../crawl/eastmoney.js';
 import { computeIndicators } from '../analyze/indicators.js';
 import { shortTermPrices, eventDrivenPrices, takeProfitFields } from '../analyze/pricing.js';
@@ -39,14 +40,14 @@ function turnoverOk(code, turnover) {
   return turnover >= 3 && turnover <= 8;
 }
 
-export function scoreShortTerm(stock, ind) {
+export function scoreShortTerm(stock, ind, { allowST = false } = {}) {
   const reasons = [];
   const veto = [];
   let score = 0;
 
   if (ind.limitUpStreak >= 2) veto.push('连续涨停高位，不适合稳定复利');
   if (ind.bias5 != null && ind.bias5 > 10) veto.push(`乖离率过大(${ind.bias5.toFixed(1)}%)，透支追高风险`);
-  if (/ST/i.test(stock.name)) veto.push('ST/*ST 不纳入短线正股池');
+  if (!allowST && /ST/i.test(stock.name)) veto.push('ST/*ST 不纳入短线正股池');
   // 已明确多头且五日线向上时，不再用「历史一次穿越」否决
   if (
     ind.unstableTrend &&
@@ -338,11 +339,34 @@ export async function runShortTermStrategy({
   corporateEvents = [],
   indexCanBuy = true,
   fast = false,
+  /** 限定在这些股票代码内扫描（板块成分） */
+  focusCodes = null,
+  /** 是否保留 ST/*ST（研究风险警示板时打开） */
+  allowST = false,
+  boardLabel = '',
   onProgress,
 } = {}) {
-  onProgress?.('拉取活跃正股列表...');
-  const stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
-  const base = stocks.filter((s) => s.price > 0 && !/ST/i.test(s.name) && s.amount > 2e7);
+  let stocks = [];
+  if (Array.isArray(focusCodes) && focusCodes.length) {
+    onProgress?.(
+      boardLabel
+        ? `按板块「${boardLabel}」拉取 ${focusCodes.length} 只成分行情...`
+        : `按指定代码拉取 ${focusCodes.length} 只行情...`
+    );
+    for (let i = 0; i < focusCodes.length; i += 80) {
+      const chunk = focusCodes.slice(i, i + 80);
+      const part = await fetchStockSnapshots(chunk);
+      stocks.push(...part);
+      await sleep(80);
+    }
+  } else {
+    onProgress?.('拉取活跃正股列表...');
+    stocks = await fetchActiveStocks({ pages: scanPages, pageSize: 100 });
+  }
+
+  const base = stocks.filter(
+    (s) => s.price > 0 && (allowST || !/ST/i.test(s.name)) && (focusCodes?.length ? true : s.amount > 2e7)
+  );
   const byAmount = [...base].sort((a, b) => b.amount - a.amount).slice(0, Math.ceil(detailLimit * 0.6));
   const byChange = [...base]
     .filter((s) => s.changePct > 0 && s.changePct < 9.5)
@@ -369,7 +393,7 @@ export async function runShortTermStrategy({
       const ind = computeIndicators(klines);
       if (!stock.turnover) stock.turnover = ind.lastTurnover;
       codeKlines[stock.code] = klines;
-      scored.push({ stock, ...scoreShortTerm(stock, ind), klines });
+      scored.push({ stock, ...scoreShortTerm(stock, ind, { allowST }), klines });
     } catch {
       /* skip */
     }

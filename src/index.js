@@ -5,6 +5,8 @@
  *
  * 用法：
  *   npm start -- --fast
+ *   npm start -- --board=创新药
+ *   npm start -- ST
  *   npm run stock -- 600519 000001
  *   # 雪球大V：自动弹浏览器，手动登录后抓取（勿再配账号密码）
  */
@@ -30,11 +32,13 @@ import { attachStrengthVerdict, formatStrengthLines } from './analyze/strengthVe
 import { attachThemeExpect } from './analyze/themeExpect.js';
 import { fetchTodayHotNews } from './crawl/hotNews.js';
 import { openInBrowser } from './output/open.js';
+import { extractBoardArg, resolveBoardUniverse } from './analyze/boardResolve.js';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const root = path.resolve(__dirname, '..');
 
 function parseArgs(argv) {
+  const { boardHint, rest } = extractBoardArg(argv);
   const args = {
     fast: false,
     shortOnly: false,
@@ -45,9 +49,9 @@ function parseArgs(argv) {
     codes: [],
     // 未能直接识别成6位代码的输入（中文名/简称），交给名称解析
     nameTokens: [],
+    boardHint,
   };
-  const rest = [];
-  for (const a of argv) {
+  for (const a of rest) {
     if (a === '--fast') args.fast = true;
     else if (a === '--short-only') args.shortOnly = true;
     else if (a === '--turnaround-only') args.turnaroundOnly = true;
@@ -56,23 +60,24 @@ function parseArgs(argv) {
     else if (a.startsWith('--max=')) {
       args.max = Math.min(30, Math.max(1, Number(a.slice(6)) || 15));
     } else if (a.startsWith('--codes=')) {
-      rest.push(a.slice(8));
+      for (const t of splitTokens([a.slice(8)])) {
+        if (/^\d{6}$/.test(t)) {
+          if (!args.codes.includes(t)) args.codes.push(t);
+        } else if (t) args.nameTokens.push(t);
+      }
     } else if (a === '--stock' || a === '--codes') {
       // skip
     } else if (!a.startsWith('-')) {
-      rest.push(a);
-    }
-  }
-
-  // 支持混写：600519 贵州茅台,远东股份 英力特
-  for (const token of splitTokens(rest)) {
-    const m = token.match(/^\d{6}$/) ? token : null;
-    if (m) {
-      if (!args.codes.includes(m)) args.codes.push(m);
-    } else if (/\d{6}/.test(token)) {
-      for (const c of normalizeCodes(token)) if (!args.codes.includes(c)) args.codes.push(c);
-    } else if (token) {
-      args.nameTokens.push(token);
+      for (const token of splitTokens([a])) {
+        const m = token.match(/^\d{6}$/) ? token : null;
+        if (m) {
+          if (!args.codes.includes(m)) args.codes.push(m);
+        } else if (/\d{6}/.test(token)) {
+          for (const c of normalizeCodes(token)) if (!args.codes.includes(c)) args.codes.push(c);
+        } else if (token) {
+          args.nameTokens.push(token);
+        }
+      }
     }
   }
   return args;
@@ -243,19 +248,36 @@ async function main() {
   }
 
   const maxCandidates = args.max;
+  const progress = (msg) => console.log(`  · ${msg}`);
+
+  let focusCodes = null;
+  let boardMeta = null;
+  if (args.boardHint) {
+    const uni = await resolveBoardUniverse(args.boardHint, {
+      limit: args.fast ? 60 : 100,
+      onProgress: progress,
+    });
+    if (!uni.board || !uni.codes.length) {
+      console.error(`未能解析板块「${args.boardHint}」，或成分股为空。可试：ST / 创新药 / 消费电子 / 元件 / AI端侧`);
+      process.exit(1);
+    }
+    boardMeta = uni.board;
+    focusCodes = uni.codes;
+  }
+
   console.log('\n启动分析...');
   console.log(
-    `模式：${args.fast ? '快速' : '标准'} | 每模块最多 ${maxCandidates} 只 | 输出 output/${dateFolder}\n`
+    `模式：${args.fast ? '快速' : '标准'} | 每模块最多 ${maxCandidates} 只 | 输出 output/${dateFolder}` +
+      `${boardMeta ? ` | 板块 ${boardMeta.name}(${boardMeta.code})` : ''}\n`
   );
 
-  const progress = (msg) => console.log(`  · ${msg}`);
   let shortRaw = null;
   let turnRaw = null;
   const runShort = !args.turnaroundOnly;
-  const runTurn = !args.shortOnly;
+  const runTurn = !args.shortOnly && !focusCodes;
 
   if (runTurn) {
-    console.log('[事件/ST] 收购·转让·重整 + ST');
+    console.log('[事件/ST] 公告·转让·重整 + ST');
     turnRaw = await runTurnaroundStrategy({
       maxCandidates,
       pagesPerKeyword: args.fast ? 2 : 3,
@@ -273,14 +295,25 @@ async function main() {
   console.log(`  √ 指数信号：${indexSignals.marketSignal} · 可买指数 ${indexSignals.buyCount} 个`);
 
   if (runShort) {
-    console.log('[正股] 五日线纯技术（不含事件股）');
+    console.log(
+      boardMeta
+        ? `[正股] 板块「${boardMeta.name}」内五日线技术`
+        : '[正股] 五日线纯技术（不含事件股）'
+    );
     shortRaw = await runShortTermStrategy({
       maxCandidates,
       scanPages: args.fast ? 4 : 8,
-      detailLimit: args.fast ? 80 : 200,
+      detailLimit: focusCodes?.length
+        ? Math.min(args.fast ? 80 : 200, focusCodes.length)
+        : args.fast
+          ? 80
+          : 200,
       klineLimit: 260,
       indexCanBuy: indexSignals.buyCount > 0,
       fast: args.fast,
+      focusCodes,
+      allowST: !!boardMeta?.allowST,
+      boardLabel: boardMeta?.name || '',
       onProgress: progress,
     });
     console.log(

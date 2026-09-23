@@ -652,16 +652,18 @@ export async function fetchStrongCount({ maxPages = 8 } = {}) {
  * 板块成分股（按涨幅降序）
  *
  * @param {string} boardCode 板块代码，形如 BK1036
- * @param {{ limit?: number }} [opts]
+ * @param {{ limit?: number, allowST?: boolean, rawFs?: boolean }} [opts]
  */
-export async function fetchBoardMembers(boardCode, { limit = 40 } = {}) {
+export async function fetchBoardMembers(boardCode, { limit = 40, allowST = false, rawFs = false } = {}) {
   const bk = String(boardCode || '').trim();
   if (!/^BK\d+$/i.test(bk)) return [];
 
   const fields = 'f2,f3,f5,f6,f8,f10,f12,f13,f14,f20,f21,f62,f184';
+  const fs = rawFs ? `b:${bk.toUpperCase()}` : `b:${bk.toUpperCase()}+f:!50`;
   const query =
     `pn=1&pz=${Math.min(100, Math.max(5, limit))}&po=1&np=1&fltt=2&invt=2&fid=f3` +
-    `&fs=${encodeURIComponent(`b:${bk.toUpperCase()}+f:!50`)}&fields=${fields}`;
+    `&fs=${encodeURIComponent(fs)}&fields=${fields}` +
+    `&ut=b2884a393a59ad64002292a3e90d46a5`;
 
   let list = [];
   try {
@@ -687,13 +689,67 @@ export async function fetchBoardMembers(boardCode, { limit = 40 } = {}) {
       mainNetInflow: num(x.f62),
       mainNetInflowPct: num(x.f184),
     }))
-    // 停牌（无价）和退市整理股不参与龙头评选
-    .filter((s) => s.price > 0 && s.code && !/退|ST\*?$/i.test(s.name));
+    // 停牌（无价）和退市整理股不参与；ST 仅在允许时保留
+    .filter((s) => {
+      if (!(s.price > 0 && s.code)) return false;
+      if (/退/.test(s.name)) return false;
+      if (!allowST && /ST/i.test(s.name)) return false;
+      return true;
+    });
 }
 
 /** 情绪/属性类伪板块，不能代表主流方向，排除出 RPS5 排名 */
 const NOISE_BOARD =
   /连板|涨停|跌停|昨日|次新|st板块|风险警示|退市|融资融券|标准普尔|富时|msci|沪股通|深股通|中字头|破净|预盈|预亏|高送转|参股|机构重仓|基金重仓|QFII|社保|举牌|大盘|中盘|小盘|微盘/i;
+
+/**
+ * 拉取概念+行业板块列表（供按名称解析）。
+ * includeNoise=true 时保留 ST/风险警示等特殊板。
+ */
+export async function fetchClistBoards({ includeNoise = false, pages = 5 } = {}) {
+  const fields = 'f12,f14,f3,f109';
+  // 东财：t:2 概念，t:3 行业
+  const groups = [
+    { fs: 'm:90+t:2', kind: '概念' },
+    { fs: 'm:90+t:3', kind: '行业' },
+  ];
+  const out = [];
+  const seen = new Set();
+  for (const { fs, kind } of groups) {
+    for (let pn = 1; pn <= pages; pn++) {
+      let list = [];
+      try {
+        const query =
+          `pn=${pn}&pz=100&po=1&np=1&fltt=2&invt=2&fid=f12` +
+          `&fs=${encodeURIComponent(fs)}&fields=${fields}`;
+        const data = await fetchClist(query);
+        list = data?.data?.diff || [];
+      } catch {
+        break;
+      }
+      if (!list.length) break;
+      for (const item of list) {
+        const name = String(item.f14 || '').trim();
+        const code = String(item.f12 || '').toUpperCase();
+        if (!name || !code) continue;
+        if (!includeNoise && NOISE_BOARD.test(name)) continue;
+        const key = `${code}|${name}`;
+        if (seen.has(key)) continue;
+        seen.add(key);
+        out.push({
+          code,
+          name,
+          kind,
+          changePct: num(item.f3),
+          change5: num(item.f109),
+        });
+      }
+      if (list.length < 100) break;
+      await sleep(120);
+    }
+  }
+  return out;
+}
 
 /**
  * 板块指数 RPS5（陶博士 241005「先看主流板块」）

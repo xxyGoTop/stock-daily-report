@@ -40,6 +40,8 @@ npm start
 |------|------|
 | `npm start` | 完整日报（三模块 + 热点 + 指数信号） |
 | `npm start -- --fast` | 快速模式，减少翻页与抓取深度 |
+| `npm start -- --board=创新药` | 限定行业/概念成分内跑正股技术 |
+| `npm start -- ST` | 风险警示板（ST股）成分内分析 |
 | `npm run stock -- 贵州茅台 600519` | 只分析指定几只（**支持中文名**） |
 | `npm run note -- 远东股份 英力特` | 生成明日交易便签（现价/买/卖/注意项） |
 | `npm run tail -- 有研新材` | **尾盘选股**：市场扫描 + 强制评估自选（HTML） |
@@ -210,8 +212,13 @@ npm run 选股                    # 同上
 npm run pick -- --limit=20      # 只要前 20
 npm run pick -- --fast          # 少扫一些（约 2~3 分钟）
 npm run pick -- --detail=300    # 扩大扫描池（更准，更慢）
+npm run pick -- --board=创新药  # 限定行业/概念成分内选股
+npm run pick -- ST              # 风险警示板（东财 ST股 BK0511）
+npm run pick -- AI端侧          # 口语行业名
 npm run pick -- --no-open       # 不自动打开浏览器
 ```
+
+行业参数也可用 `--sector=` / `--行业=`。常用别名：`ST` / `风险警示`、`AI端侧`、`元件`、`消费电子`、`消费`、`创新药`、`半导体` 等。
 
 五套算法按优先级：
 
@@ -325,6 +332,7 @@ src/
     shortTerm.js        正股短线打分
     turnaround.js       ST / 重整 / 收购事件打分
   analyze/
+    boardResolve.js     行业/概念板块解析与成分限定（pick/start --board）
     indicators.js       均线 / MACD / KDJ / RSI / RPS
     tao.js              陶博士顺向火车轨、火车每日观察、241005择股、蓝色钻石、全市场RPS
     marketMeta.js       行业 / 主力资金流 / 筹码集中度
